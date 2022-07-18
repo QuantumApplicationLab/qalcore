@@ -1,6 +1,8 @@
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
+from qiskit.providers import Backend
 from qiskit.quantum_info.operators import Operator
 from qiskit import execute, Aer
+from qiskit import transpile, assemble
 import numpy as np
 
 
@@ -72,3 +74,34 @@ def apply_controlled_gate(circ, mat, auxiliary, qubits, name=None):
     op = Operator(mat)
     qc1.append(op, [auxiliary] + qubits)
     circ.append(qc1, [auxiliary] + qubits)
+
+
+def unitarymatrix2circuit(A, backend):
+    """Create the circuit associated with the backend
+
+    Args:
+        A (np.array): matrix to be transformed
+        backend (qiskit.backend): backend to be used
+    """
+    nqbit = int(np.ceil(np.log2(A.shape[0])))
+    config = backend.configuration()
+    qc = QuantumCircuit(nqbit)
+    qc.unitary(A, list(range(nqbit)))
+    return transpile(qc, basis_gates=config.basis_gates)
+
+def get_circuit_state_vector(circ: QuantumCircuit, backend: Backend, decimals: int =100):
+    """Get the state vector of a give circuit after execution on the backend
+
+    Args:
+        circ (QuantumCircuit): circuit to get the statevector of
+        backend (backend): backend
+        decimals (int, optional): Numbers of decimals we need. Defaults to 100.
+    """
+
+    circ.save_statevector()
+    t_circ = transpile(circ, backend)
+    qobj = assemble(t_circ)
+    job = backend.run(qobj)
+    result = job.result()
+
+    return result.get_statevector(circ, decimals=decimals)
