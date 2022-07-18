@@ -67,6 +67,13 @@ class UnitaryDecomposition:
             mat_recomp = self.recompose()
             assert(np.allclose(self.mat,mat_recomp))
 
+    def normalize_coefficients(self):
+        """Normalize the coefficients
+        """
+
+        sum_coeff = np.array(self.unit_coeffs).sum()
+        self.unit_coeffs = [u/sum_coeff for u in self.unit_coeffs]
+
     def clean_matrices(self):
         """Remove matrices that are null
         """

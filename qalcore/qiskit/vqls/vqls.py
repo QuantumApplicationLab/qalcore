@@ -3,6 +3,7 @@
 # Tutorial :
 
 import numpy as np
+from scipy.optimize import minimize
 import qiskit 
 from qiskit.circuit.library.n_local.real_amplitudes import RealAmplitudes
 from qiskit import Aer, transpile, assemble
@@ -39,6 +40,7 @@ class VQLS:
         # decompose the A matrix as a sum of unitary matrices
         unitdecomp_A = UnitaryDecomposition(self.A)
         unitdecomp_A.decompose(check=True)
+        unitdecomp_A.normalize_coefficients()
 
         # get the circuit associated with the A matrices
         self.Acirc, self.Aconjcirc = self._get_A_circuit(unitdecomp_A)
@@ -49,16 +51,17 @@ class VQLS:
         # get the circuit needed to create the Ub_mat
         self.Ubconjcirc = unitarymatrix2circuit(Ub_mat.transpose(), self.backend)
 
-        # get the controlled version of the matrices
-        ctrl_Ub_mat = get_controlled_matrix([Ub_mat], 0, [1,2,3])[0].real
-        ctrl_Ub_mat_dagger = get_controlled_matrix([Ub_mat.transpose()], 0, [1,2,3])[0].real
-
         # variational ansatz
         if ansatz is None:
             self.ansatz = RealAmplitudes(self.nqbit, entanglement='linear', reps=2, insert_barriers=True)
         else:
             assert(type(ansatz)==qiskit.QuantumCircuit)
             self.ansatz = ansatz
+
+        return minimize(self._cost, 
+                        x0 = np.random.rand(self.ansatz.num_parameters),
+                        method='COBYLA',
+                        options={'maxiter':iter, 'disp':False})   
 
 
     def _get_A_circuit(self, umats):
@@ -75,6 +78,14 @@ class VQLS:
         return acirc, aconjcirc
 
     def _cost(self, parameters, *args):
+        """Computes the cost of the optimization
+
+        Args:
+            parameters (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
 
         hdmr_sum = self._compute_hadammard_sum(parameters)
         spec_hdmr_sum = self._compute_special_hadammard_sum(parameters)
