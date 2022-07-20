@@ -4,16 +4,18 @@
 
 import numpy as np
 from scipy.optimize import minimize
+
 import qiskit 
 from qiskit.circuit.library.n_local.real_amplitudes import RealAmplitudes
 from qiskit import Aer, transpile, assemble
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
-from qalcore.qiskit.utils.circuit.special_hadammard_test import SpecialHadammardTest
+
 
 from qalcore.utils.unitary_decomposition import UnitaryDecomposition
 from qalcore.qiskit.utils.circ_utils import vector_creation, get_controlled_matrix, unitarymatrix2circuit
 from qalcore.qiskit.utils.circ_utils import get_circuit_state_vector
 from qalcore.qiskit.utils.circuit.hadammard_test import HadammardTest
+from qalcore.qiskit.utils.circuit.special_hadammard_test import SpecialHadammardTest
 from types import SimpleNamespace
 
 class VQLS:
@@ -31,11 +33,17 @@ class VQLS:
 
         self.A = A
         self.b = b 
-
+        self.backend = None
         self.system_size = self.A.shape[0]
-        self.nqbit = np.log2(self.system_size)
+        self.nqbit = int(np.log2(self.system_size))
 
-    def solve(self, ansatz=None, iter=100, backend=Aer.get_backend('aer_simulator')):
+    def solve(self, ansatz=None, niter=100, 
+              backend=Aer.get_backend('aer_simulator'), verbose=False):
+
+        self.backend = backend
+        self.niter = niter
+        self.iiter = 0 
+        self.verbose=verbose
 
         # decompose the A matrix as a sum of unitary matrices
         unitdecomp_A = UnitaryDecomposition(self.A)
@@ -46,29 +54,33 @@ class VQLS:
         self.Acirc, self.Aconjcirc = self._get_A_circuit(unitdecomp_A)
 
         # get the matrix of the cricuit needed to create the rhs
-        norm, Ub_mat = vector_creation(self.b, self.nqbit, decimals=6)
+        norm, Ub_mat = vector_creation(self.b, self.nqbit, decimals=16)
 
         # get the circuit needed to create the Ub_mat
         self.Ubconjcirc = unitarymatrix2circuit(Ub_mat.transpose(), self.backend)
 
         # variational ansatz
         if ansatz is None:
-            self.ansatz = RealAmplitudes(self.nqbit, entanglement='linear', reps=2, insert_barriers=True)
+            self.ansatz = RealAmplitudes(self.nqbit, entanglement='linear', reps=2, insert_barriers=False)
         else:
             assert(type(ansatz)==qiskit.QuantumCircuit)
             self.ansatz = ansatz
 
+        # initial value of the parameters
+        x0 = np.random.rand(self.ansatz.num_parameters_settable)
+
         return minimize(self._cost, 
-                        x0 = np.random.rand(self.ansatz.num_parameters),
+                        x0 = x0,
+                        args=(self,),
                         method='COBYLA',
-                        options={'maxiter':iter, 'disp':False})   
+                        options={'maxiter':niter, 'disp':False})   
 
 
     def _get_A_circuit(self, umats):
         """Creates the circuit associated with the A matrices
         """
         acirc, aconjcirc = [], []
-        for c, mat in zip(umats.coeffs, umats.unit_mats):
+        for c, mat in zip(umats.unit_coeffs, umats.unit_mats):
             qc = unitarymatrix2circuit(mat, self.backend)
             acirc.append(SimpleNamespace(coeff=c, circuit=qc))
 
@@ -77,7 +89,8 @@ class VQLS:
 
         return acirc, aconjcirc
 
-    def _cost(self, parameters, *args):
+    @staticmethod
+    def _cost(parameters, *args):
         """Computes the cost of the optimization
 
         Args:
@@ -87,14 +100,32 @@ class VQLS:
             _type_: _description_
         """
 
-        hdmr_sum = self._compute_hadammard_sum(parameters)
-        spec_hdmr_sum = self._compute_special_hadammard_sum(parameters)
+        (self,) = args
+        self.iiter += 1
+        self._assign_parameters(parameters)
+        hdmr_sum = self._compute_hadammard_sum()
+        spec_hdmr_sum = self._compute_special_hadammard_sum()
 
         cost = 1.0 - (spec_hdmr_sum/hdmr_sum)
+
+        if self.verbose:
+            print('iteration %d/%d, cost %f' %(self.iiter, self.niter, cost))
+
         return cost.real
 
+    def _assign_parameters(self, parameters):
+        """Assign the parameter values to the circuit
 
-    def _compute_hadammard_sum(self, parameters):
+        Args:
+            parameters (_type_): _description_
+        """
+        
+        bind_dict = {}
+        for i, key in enumerate(self.ansatz.parameters):
+            bind_dict[key] = parameters[i]
+        self.ansatz.assign_parameters(bind_dict, inplace=True)
+
+    def _compute_hadammard_sum(self):
         """Compute the Hadammard sum
 
         .. math:
@@ -121,22 +152,21 @@ class VQLS:
                     hdmr_circ = HadammardTest(
                         ansatz=self.ansatz,
                         operators=[circ_i.circuit, circ_j.circuit],
-                        num_qubits=self.nqbit,
-                        index_auxiliary_qubit=0,
+                        num_qubits=self.nqbit+1,
                         imaginary=compute_imaginary_part 
                     )
 
-                    qctl = QuantumRegister(self.nqbit)
-                    qc = ClassicalRegister(self.nqbit)
+                    qctl = QuantumRegister(self.nqbit+1)
+                    qc = ClassicalRegister(self.nqbit+1)
                     circ = QuantumCircuit(qctl, qc)
 
                     circ.compose(hdmr_circ, 
-                                 qubits=list(range(self.nqbit)), 
+                                 qubits=list(range(self.nqbit+1)), 
                                  inplace=True)
 
-                    state_vector = get_circuit_state_vector(circ, self.backend)
-                    proba = 1.0 - 2.0 * state_vector[::2]*state_vector[::2].conj()
-
+                    state_vector = np.array(get_circuit_state_vector(circ, self.backend))
+                    proba = 1.0 - 2.0 * (state_vector[::2]*state_vector[::2].conj()).sum()
+                   
                     if compute_imaginary_part:
                         beta_ij += 1.0j * proba 
                     else:
@@ -144,10 +174,10 @@ class VQLS:
 
                 hdmr_sum += prefac * beta_ij
 
-        return hdmr_sum
+        return hdmr_sum.real
 
 
-    def _compute_special_hadammard_sum(self, parameters):
+    def _compute_special_hadammard_sum(self):
         """Compute the special haddamard sum
 
         Args:
@@ -156,7 +186,6 @@ class VQLS:
         Returns:
             _type_: _description_
         """
-
         spec_hdmr_sum = 0.0 + 0.0j
 
         for circ_i in self.Acirc:
@@ -182,7 +211,6 @@ class VQLS:
                             ansatz=self.ansatz,
                             operators=ops,
                             num_qubits=self.nqbit+1,
-                            index_auxiliary_qubit=0,
                             imaginary=compute_imaginary_part 
                         )
 
@@ -193,8 +221,8 @@ class VQLS:
                                      qubits=list(range(self.nqbit+1)),
                                      inplace=True)
 
-                        state_vector = get_circuit_state_vector(circ, self.backend)
-                        proba = 1.0 - 2.0 * state_vector[1::2]*state_vector[1::2].conj()
+                        state_vector = np.array(get_circuit_state_vector(circ, self.backend))
+                        proba = 1.0 - 2.0 * (state_vector[1::2]*state_vector[1::2].conj()).sum()
 
                         if compute_imaginary_part:
                             term += 1.0j * proba 
@@ -209,6 +237,6 @@ class VQLS:
                         gamma_ij *= term.conj()
                 
                 spec_hdmr_sum += prefac * gamma_ij
-        
-        return spec_hdmr_sum
+
+        return spec_hdmr_sum.real
                     

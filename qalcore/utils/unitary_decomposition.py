@@ -8,7 +8,7 @@ class UnitaryDecomposition:
     def __init__(self, mat, thr=1E-6):
         self.mat = mat
         self.unit_coeffs = None
-        self unit_mats = None 
+        self.unit_mats = None 
         self.thr = thr
 
     @staticmethod
@@ -28,7 +28,8 @@ class UnitaryDecomposition:
         Performs a matrix operation that we'll need later
         """
         I = np.eye(len(x))
-        return 1j*spla.sqrtm(I - x**2)
+        x2 = np.linalg.matrix_power(x,2)
+        return 1j*spla.sqrtm(I - x2)
 
     def decompose(self, check = False):
 
@@ -56,9 +57,14 @@ class UnitaryDecomposition:
         cb = norm * 0.5
         cc = cb * 1j
 
-        ## Return
-        self.unit_coeffs = [cb,cb,cc,cc]
-        self.unit_mats = [UB, VB, UC, VC]
+        if np.allclose(self.mat, self.mat.T.conj()):
+            ## Return
+            self.unit_coeffs = [cb,cb]
+            self.unit_mats = [UB, VB]
+        else:
+            ## Return
+            self.unit_coeffs = [cb,cb,cc,cc]
+            self.unit_mats = [UB, VB, UC, VC]         
 
         # remove null matrices
         self.clean_matrices()
@@ -90,7 +96,7 @@ class UnitaryDecomposition:
 
     def recompose(self):
         """ Rebuilds the original matrix from the decomposed one """
-        recomp = np.zeros_like(self.unit_mat[0])
+        recomp = np.zeros_like(self.unit_mats[0])
         for c, m in zip(self.unit_coeffs, self.unit_mats):
             recomp += c * m
         return recomp

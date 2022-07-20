@@ -4,6 +4,7 @@ from qiskit.quantum_info.operators import Operator
 from qiskit import execute, Aer
 from qiskit import transpile, assemble
 import numpy as np
+from typing import List
 
 
 def vector_creation(desired_vector, nqbit, decimals=6):
@@ -36,7 +37,7 @@ def vector_creation(desired_vector, nqbit, decimals=6):
 
     # get the unitary of the circuit
     umatrix = job.result().get_unitary(qc,decimals=decimals) 
-    return norm, umatrix
+    return norm, np.array(umatrix)
 
 def get_controlled_matrix(matrices, auxiliary, qubits):
     """Create the matrix corresponding to the controlled version of the operator
@@ -76,7 +77,7 @@ def apply_controlled_gate(circ, mat, auxiliary, qubits, name=None):
     circ.append(qc1, [auxiliary] + qubits)
 
 
-def unitarymatrix2circuit(A, backend):
+def unitarymatrix2circuit(A, backend, name=None):
     """Create the circuit associated with the backend
 
     Args:
@@ -85,11 +86,14 @@ def unitarymatrix2circuit(A, backend):
     """
     nqbit = int(np.ceil(np.log2(A.shape[0])))
     config = backend.configuration()
-    qc = QuantumCircuit(nqbit)
+    qc = QuantumCircuit(nqbit, name=name)
     qc.unitary(A, list(range(nqbit)))
-    return transpile(qc, basis_gates=config.basis_gates)
+    return transpile(qc, basis_gates=config.basis_gates, output_name=name)
 
-def get_circuit_state_vector(circ: QuantumCircuit, backend: Backend, decimals: int =100):
+def get_circuit_state_vector(circ: QuantumCircuit, 
+                             backend: Backend, 
+                             parameters: List = None,
+                             decimals: int =100):
     """Get the state vector of a give circuit after execution on the backend
 
     Args:

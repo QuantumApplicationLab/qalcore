@@ -1,28 +1,53 @@
 """Special Hadammard test."""
 
 
-from pyparsing import Optional, List
+from typing import Optional, List
 from qiskit import QuantumCircuit
-from qalcore.qiskit.utils.circuit.hadammard_test import HadammardTest
 
-class SpecialHadammardTest(HadammardTest):
+class SpecialHadammardTest(QuantumCircuit):
 
     def __init__(
         self,
-        variational_ansatz: QuantumCircuit,
+        ansatz: QuantumCircuit,
         operators: List[QuantumCircuit],
         num_qubits: Optional[int] = None,
-        index_auxiliary_qubit: Optional[int] = 0,
         imaginary: Optional[bool] = False
     ):
 
-        variational_ansatz = variational_ansatz.control(index_auxiliary_qubit)
-        super().__init__(
-            variational_ansatz=variational_ansatz,
-            operators=operators,
-            num_qubits=num_qubits,
-            index_auxiliary_qubit=index_auxiliary_qubit,
-            imaginary=imaginary
-        )
+        self.variational_ansatz = ansatz.control(1)
+        self.operators = operators
+        # self.num_qubits = num_qubits
+        self.imaginary = imaginary
+        super().__init__(num_qubits, 
+                         name='spec_hdmr',
+                         metadata={'description':'Hadammard Test Ref : []'})
+                         
+        self._build_circuit()
+
+    def _build_circuit(self):
+
+
+        # hadadmard gate on ctrl qbit
+        self.h(0)
+
+        # Sdg on ctrl qbit
+        if self.imaginary:
+            self.sdg(0)
+        
+        self.barrier()
+
+        # ansatz
+        self.compose(self.variational_ansatz, 
+                     qubits=list(range(0,self.num_qubits)),
+                     inplace=True)
+
+        # matrix circuit
+        for op in self.operators:
+            self.compose(op.control(1),
+                         qubits=list(range(0,self.num_qubits)),
+                         inplace=True)
+
+        # hadamard on ctrl circuit
+        self.h(0)
 
     
