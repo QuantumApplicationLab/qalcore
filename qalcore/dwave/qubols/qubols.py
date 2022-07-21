@@ -18,7 +18,7 @@ class QUBOLS:
         
 
     def solve(self, sampler = neal.SimulatedAnnealingSampler(), 
-                    encoding=RealUnitQbitEncoding, nqbit=10):
+                    encoding=RealUnitQbitEncoding, nqbit=11, **kwargs):
         """_summary_
 
         Args:
@@ -31,12 +31,12 @@ class QUBOLS:
         """
 
         sol = SolutionVector(size=self.size, nqbit=nqbit, encoding=encoding)
-        x = sol.create_polynom_vector()
-        qubo_dict = self.create_qubo_matrix(x)
+        self.x = sol.create_polynom_vector()
+        self.qubo_dict = self.create_qubo_matrix(self.x)
 
-        sampleset = sampler.sample_qubo(qubo_dict,num_reads=1000)
-        lowest_sol = sampleset.lowest()
-        return sol.decode_solution(lowest_sol.record[0][0])
+        self.sampleset = sampler.sample_qubo(self.qubo_dict,**kwargs)
+        self.lowest_sol = self.sampleset.lowest()
+        return sol.decode_solution(self.lowest_sol.record[0][0])
 
     def create_qubo_matrix(self, x):
         """Create the QUBO dictionary requried by dwave solvers
