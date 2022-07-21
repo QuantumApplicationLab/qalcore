@@ -2,6 +2,7 @@
 # Ref : 
 # Tutorial :
 
+from multiprocessing.connection import answer_challenge
 import numpy as np
 from scipy.optimize import minimize
 
@@ -93,11 +94,11 @@ class VQLS:
         """Creates the circuit associated with the A matrices
         """
         acirc, aconjcirc = [], []
-        for c, mat in zip(umats.unit_coeffs, umats.unit_mats):
-            qc = unitarymatrix2circuit(mat, self.backend)
+        for i, (c, mat) in enumerate(zip(umats.unit_coeffs, umats.unit_mats)):
+            qc = unitarymatrix2circuit(mat, self.backend, name='A'+str(i))
             acirc.append(SimpleNamespace(coeff=c, circuit=qc))
 
-            qc = unitarymatrix2circuit(np.conjugate(mat).transpose(), self.backend)
+            qc = unitarymatrix2circuit(np.conjugate(mat).transpose(), self.backend, name='Aconj'+str(i))
             aconjcirc.append(SimpleNamespace(coeff=c, circuit=qc))
 
         return acirc, aconjcirc
@@ -137,6 +138,44 @@ class VQLS:
             bind_dict[key] = parameters[i]
         return self.ansatz.assign_parameters(bind_dict, inplace=False)
 
+    def _pretranspile_hadammard(self):
+        """Pre transpile the Hadammard circuits
+        """
+        self.transpiled_hadammard_circuits = dict()
+
+        for circ_i in self.Aconjcirc:
+            for circ_j in self.Acirc:
+                for compute_imaginary_part in [False, True]:
+
+                    circ = self._get_hadammard_circuit(
+                        ansatz=self.ansatz,
+                        operators=[circ_i.circuit, circ_j.circuit],
+                        compute_imaginary_part=compute_imaginary_part
+                    )
+                    circ.save_statevector()
+                    key = (circ_i.circuit.name, circ_j.circuit.name, compute_imaginary_part)
+                    self.transpiled_hadammard_circuits[key] = transpile(circ, self.backend)
+                    
+
+    def _pretranspile_special_hadamamrd(self):
+        """_summary_
+        """
+
+        self.transpiled_special_hadammard_circuits = dict()
+        
+        for circ_i in self.Acirc:
+            for compute_imaginary_part in [False, True]:
+
+                circ = self._get_special_hadammard_circuit(
+                    ansatz=self.ansatz,
+                    operators=[circ_i.circuit, self.Ubconjcirc],
+                    compute_imaginary_part=compute_imaginary_part
+                        )
+                circ.save_statevector()
+                key = (circ_i.circuit.name, compute_imaginary_part)
+                self.transpiled_special_hadammard_circuits[key] = transpile(circ, self.backend)
+
+
     def _compute_hadammard_sum(self, parameters):
         """Compute the Hadammard sum
 
@@ -163,20 +202,11 @@ class VQLS:
 
                     local_ansatz = self._assign_parameters(parameters)
 
-                    hdmr_circ = HadammardTest(
+                    circ = self._get_hadammard_circuit(
                         ansatz=local_ansatz,
                         operators=[circ_i.circuit, circ_j.circuit],
-                        num_qubits=self.nqbit+1,
-                        imaginary=compute_imaginary_part 
+                        compute_imaginary_part=compute_imaginary_part
                     )
-
-                    qctl = QuantumRegister(self.nqbit+1)
-                    qc = ClassicalRegister(self.nqbit+1)
-                    circ = QuantumCircuit(qctl, qc)
-
-                    circ.compose(hdmr_circ, 
-                                 qubits=list(range(self.nqbit+1)), 
-                                 inplace=True)
 
                     state_vector = np.array(get_circuit_state_vector(circ, self.backend))
                     sv1 = state_vector[1::2]
@@ -223,19 +253,11 @@ class VQLS:
 
                         local_ansatz = self._assign_parameters(parameters)
 
-                        spec_hdmr_circ = SpecialHadammardTest(
+                        circ = self._get_special_hadammard_circuit(
                             ansatz=local_ansatz,
                             operators=ops,
-                            num_qubits=self.nqbit+1,
-                            imaginary=compute_imaginary_part 
+                            compute_imaginary_part=compute_imaginary_part
                         )
-
-                        qctl = QuantumRegister(self.nqbit+1)
-                        qc = ClassicalRegister(self.nqbit+1)
-                        circ = QuantumCircuit(qctl, qc)
-                        circ.compose(spec_hdmr_circ, 
-                                     qubits=list(range(self.nqbit+1)),
-                                     inplace=True)
 
                         state_vector = np.array(get_circuit_state_vector(circ, self.backend))
                         sv1 = state_vector[1::2]
@@ -256,4 +278,51 @@ class VQLS:
                 spec_hdmr_sum += prefac * gamma_ij
 
         return spec_hdmr_sum.real
+
+    def _get_hadammard_circuit(self, ansatz, operators, compute_imaginary_part):
+        """Get a single hadammard circuit
+
+        Args:
+            parameters (_type_, optional): _description_. Defaults to None.
+        """
+
+        hdmr_circ = HadammardTest(
+            ansatz=ansatz,
+            operators=operators,
+            num_qubits=self.nqbit+1,
+            imaginary=compute_imaginary_part 
+        )
+
+        qctl = QuantumRegister(self.nqbit+1)
+        qc = ClassicalRegister(self.nqbit+1)
+        circ = QuantumCircuit(qctl, qc)
+        circ.compose(hdmr_circ, 
+                            qubits=list(range(self.nqbit+1)), 
+                            inplace=True)   
+        return circ
+
+    def _get_special_hadammard_circuit(self, ansatz, operators, compute_imaginary_part):
+        """ge the a single special hadammard ciruit
+
+        Args:
+            ansatz (_type_): _description_
+            operators (_type_): _description_
+            extra (_type_): _description_
+            compute_imaginary_part (_type_): _description_
+        """
+
+        spec_hdmr_circ = SpecialHadammardTest(
+            ansatz=ansatz,
+            operators=operators,
+            num_qubits=self.nqbit+1,
+            imaginary=compute_imaginary_part 
+        )
+
+        qctl = QuantumRegister(self.nqbit+1)
+        qc = ClassicalRegister(self.nqbit+1)
+        circ = QuantumCircuit(qctl, qc)
+        circ.compose(spec_hdmr_circ, 
+                            qubits=list(range(self.nqbit+1)),
+                            inplace=True)
+        return circ
 
