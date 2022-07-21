@@ -18,6 +18,8 @@ from qalcore.qiskit.utils.circuit.hadammard_test import HadammardTest
 from qalcore.qiskit.utils.circuit.special_hadammard_test import SpecialHadammardTest
 from types import SimpleNamespace
 
+import matplotlib.pyplot as plt
+
 class VQLS:
 
     def __init__(self, A, b):
@@ -69,12 +71,23 @@ class VQLS:
         # initial value of the parameters
         x0 = np.random.rand(self.ansatz.num_parameters_settable)
 
-        return minimize(self._cost, 
-                        x0 = x0,
-                        args=(self,),
-                        method='COBYLA',
-                        options={'maxiter':niter, 'disp':False})   
+        # minimize the solutions
+        opt_data = minimize(self._cost, 
+                                x0 = x0,
+                                args=(self,),
+                                method='COBYLA',
+                                options={'maxiter':niter, 
+                                         'disp':False}) 
 
+        # get the solution vector
+        opt_params = opt_data['x']  
+        opt_ansatz = self._assign_parameters(opt_params)  
+        opt_circ = QuantumCircuit(opt_ansatz.num_qubits, opt_ansatz.num_qubits)
+        opt_circ.compose(opt_ansatz, list(range(opt_ansatz.num_qubits)),inplace=True)  
+        
+        return np.array(get_circuit_state_vector(opt_circ, 
+                                                 self.backend, 
+                                                 decimals=100))
 
     def _get_A_circuit(self, umats):
         """Creates the circuit associated with the A matrices
@@ -84,7 +97,7 @@ class VQLS:
             qc = unitarymatrix2circuit(mat, self.backend)
             acirc.append(SimpleNamespace(coeff=c, circuit=qc))
 
-            qc = unitarymatrix2circuit(mat.transpose(), self.backend)
+            qc = unitarymatrix2circuit(np.conjugate(mat).transpose(), self.backend)
             aconjcirc.append(SimpleNamespace(coeff=c, circuit=qc))
 
         return acirc, aconjcirc
@@ -140,8 +153,8 @@ class VQLS:
 
         hdmr_sum = 0.0 + 0.0j
 
-        for circ_i in self.Acirc:
-            for circ_j in self.Aconjcirc:
+        for circ_i in self.Aconjcirc:
+            for circ_j in self.Acirc:
 
                 prefac = circ_i.coeff.conj() * circ_j.coeff
                 beta_ij = 0.0 + 0.0j
@@ -166,7 +179,8 @@ class VQLS:
                                  inplace=True)
 
                     state_vector = np.array(get_circuit_state_vector(circ, self.backend))
-                    proba = 1.0 - 2.0 * (state_vector[::2]*state_vector[::2].conj()).sum()
+                    sv1 = state_vector[1::2]
+                    proba = 1.0 - 2.0 * (sv1*sv1.conj()).sum()
                    
                     if compute_imaginary_part:
                         beta_ij += 1.0j * proba 
@@ -224,7 +238,8 @@ class VQLS:
                                      inplace=True)
 
                         state_vector = np.array(get_circuit_state_vector(circ, self.backend))
-                        proba = 1.0 - 2.0 * (state_vector[1::2]*state_vector[1::2].conj()).sum()
+                        sv1 = state_vector[1::2]
+                        proba = 1.0 - 2.0 * (sv1*sv1.conj()).sum()
 
                         if compute_imaginary_part:
                             term += 1.0j * proba 
@@ -241,4 +256,4 @@ class VQLS:
                 spec_hdmr_sum += prefac * gamma_ij
 
         return spec_hdmr_sum.real
-                    
+
