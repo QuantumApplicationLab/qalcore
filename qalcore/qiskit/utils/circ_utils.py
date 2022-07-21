@@ -92,7 +92,6 @@ def unitarymatrix2circuit(A, backend, name=None):
 
 def get_circuit_state_vector(circ: QuantumCircuit, 
                              backend: Backend, 
-                             parameters: List = None,
                              decimals: int =100):
     """Get the state vector of a give circuit after execution on the backend
 

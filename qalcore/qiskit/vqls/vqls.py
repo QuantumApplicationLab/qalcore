@@ -102,9 +102,8 @@ class VQLS:
 
         (self,) = args
         self.iiter += 1
-        self._assign_parameters(parameters)
-        hdmr_sum = self._compute_hadammard_sum()
-        spec_hdmr_sum = self._compute_special_hadammard_sum()
+        hdmr_sum = self._compute_hadammard_sum(parameters)
+        spec_hdmr_sum = self._compute_special_hadammard_sum(parameters)
 
         cost = 1.0 - (spec_hdmr_sum/hdmr_sum)
 
@@ -123,9 +122,9 @@ class VQLS:
         bind_dict = {}
         for i, key in enumerate(self.ansatz.parameters):
             bind_dict[key] = parameters[i]
-        self.ansatz.assign_parameters(bind_dict, inplace=True)
+        return self.ansatz.assign_parameters(bind_dict, inplace=False)
 
-    def _compute_hadammard_sum(self):
+    def _compute_hadammard_sum(self, parameters):
         """Compute the Hadammard sum
 
         .. math:
@@ -149,8 +148,10 @@ class VQLS:
 
                 for compute_imaginary_part in [False, True]:
 
+                    local_ansatz = self._assign_parameters(parameters)
+
                     hdmr_circ = HadammardTest(
-                        ansatz=self.ansatz,
+                        ansatz=local_ansatz,
                         operators=[circ_i.circuit, circ_j.circuit],
                         num_qubits=self.nqbit+1,
                         imaginary=compute_imaginary_part 
@@ -177,7 +178,7 @@ class VQLS:
         return hdmr_sum.real
 
 
-    def _compute_special_hadammard_sum(self):
+    def _compute_special_hadammard_sum(self, parameters):
         """Compute the special haddamard sum
 
         Args:
@@ -206,9 +207,10 @@ class VQLS:
                         else:
                             ops = [circ_j.circuit, self.Ubconjcirc]
 
+                        local_ansatz = self._assign_parameters(parameters)
 
                         spec_hdmr_circ = SpecialHadammardTest(
-                            ansatz=self.ansatz,
+                            ansatz=local_ansatz,
                             operators=ops,
                             num_qubits=self.nqbit+1,
                             imaginary=compute_imaginary_part 
