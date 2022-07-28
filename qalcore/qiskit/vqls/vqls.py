@@ -210,13 +210,14 @@ class VQLS:
 
                     state_vector = np.array(get_circuit_state_vector(circ, self.backend))
                     sv1 = state_vector[1::2]
+                    
                     proba = 1.0 - 2.0 * (sv1*sv1.conj()).sum()
-                   
+                    print(proba)
                     if compute_imaginary_part:
                         beta_ij += 1.0j * proba 
                     else:
                         beta_ij += proba 
-
+                # print(prefac * beta_ij)
                 hdmr_sum += prefac * beta_ij
 
         return hdmr_sum.real
