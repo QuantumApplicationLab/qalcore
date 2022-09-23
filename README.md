@@ -1,30 +1,14 @@
-## Badges
+## qalcore 
 
-(Customize these badges with your own links, and check https://shields.io/ or https://badgen.net/ to see which other badges are available.)
 
-| fair-software.eu recommendations | |
-| :-- | :--  |
-| (1/5) code repository              | [![github repo badge](https://img.shields.io/badge/github-repo-000.svg?logo=github&labelColor=gray&color=blue)](https://github.com/QuantumApplicationLab/qalcore) |
-| (2/5) license                      | [![github license badge](https://img.shields.io/github/license/QuantumApplicationLab/qalcore)](https://github.com/QuantumApplicationLab/qalcore) |
-| (3/5) community registry           | [![RSD](https://img.shields.io/badge/rsd-qalcore-00a3e3.svg)](https://www.research-software.nl/software/qalcore) [![workflow pypi badge](https://img.shields.io/pypi/v/qalcore.svg?colorB=blue)](https://pypi.python.org/project/qalcore/) |
-| (4/5) citation                     | [![DOI](https://zenodo.org/badge/DOI/<replace-with-created-DOI>.svg)](https://doi.org/<replace-with-created-DOI>) |
-| (5/5) checklist                    | [![workflow cii badge](https://bestpractices.coreinfrastructure.org/projects/<replace-with-created-project-identifier>/badge)](https://bestpractices.coreinfrastructure.org/projects/<replace-with-created-project-identifier>) |
-| howfairis                          | [![fair-software badge](https://img.shields.io/badge/fair--software.eu-%E2%97%8F%20%20%E2%97%8F%20%20%E2%97%8F%20%20%E2%97%8F%20%20%E2%97%8B-yellow)](https://fair-software.eu) |
-| **Other best practices**           | &nbsp; |
-| Static analysis                    | [![workflow scq badge](https://sonarcloud.io/api/project_badges/measure?project=QuantumApplicationLab_qalcore&metric=alert_status)](https://sonarcloud.io/dashboard?id=QuantumApplicationLab_qalcore) |
-| Coverage                           | [![workflow scc badge](https://sonarcloud.io/api/project_badges/measure?project=QuantumApplicationLab_qalcore&metric=coverage)](https://sonarcloud.io/dashboard?id=QuantumApplicationLab_qalcore) |
-| Documentation                      | [![Documentation Status](https://readthedocs.org/projects/qalcore/badge/?version=latest)](https://qalcore.readthedocs.io/en/latest/?badge=latest) |
-| **GitHub Actions**                 | &nbsp; |
-| Build                              | [![build](https://github.com/QuantumApplicationLab/qalcore/actions/workflows/build.yml/badge.svg)](https://github.com/QuantumApplicationLab/qalcore/actions/workflows/build.yml) |
-| Citation data consistency               | [![cffconvert](https://github.com/QuantumApplicationLab/qalcore/actions/workflows/cffconvert.yml/badge.svg)](https://github.com/QuantumApplicationLab/qalcore/actions/workflows/cffconvert.yml) |
-| SonarCloud                         | [![sonarcloud](https://github.com/QuantumApplicationLab/qalcore/actions/workflows/sonarcloud.yml/badge.svg)](https://github.com/QuantumApplicationLab/qalcore/actions/workflows/sonarcloud.yml) |
-| MarkDown link checker              | [![markdown-link-check](https://github.com/QuantumApplicationLab/qalcore/actions/workflows/markdown-link-check.yml/badge.svg)](https://github.com/QuantumApplicationLab/qalcore/actions/workflows/markdown-link-check.yml) |
+[![github repo badge](https://img.shields.io/badge/github-repo-000.svg?logo=github&labelColor=gray&color=blue)](https://github.com/QuantumApplicationLab/qalcore)
+[![github license badge](https://img.shields.io/github/license/QuantumApplicationLab/qalcore)](https://github.com/QuantumApplicationLab/qalcore)
+<!-- [![RSD](https://img.shields.io/badge/rsd-qalcore-00a3e3.svg)](https://www.research-software.nl/software/qalcore) 
+[![workflow pypi badge](https://img.shields.io/pypi/v/qalcore.svg?colorB=blue)](https://pypi.python.org/project/qalcore/) | -->
 
-## How to use qalcore
+The Quantum Application Lab Core Library
 
-Quantum Application Lab core library
 
-The project setup is documented in [project_setup.md](project_setup.md). Feel free to remove this document (and/or the link to this document) if you don't need it.
 
 ## Installation
 
@@ -36,9 +20,9 @@ cd qalcore
 python3 -m pip install .
 ```
 
-## Documentation
+<!-- ## Documentation
 
-Include a link to your project's full documentation here.
+Include a link to your project's full documentation here. -->
 
 ## Contributing
 
