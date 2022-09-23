@@ -1,7 +1,7 @@
 from sympy import Symbol
 from sympy.matrices import Matrix
 import numpy as np
-from qalcore.dwave.utils.encodings import RealUnitQbitEncoding
+from qalcore.dwave.qubols.encodings import RealUnitQbitEncoding
 from dwave.system import DWaveSampler , EmbeddingComposite
 import neal
 from dimod import ExactSolver

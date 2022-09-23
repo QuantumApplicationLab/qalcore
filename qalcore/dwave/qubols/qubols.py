@@ -11,6 +11,12 @@ from .solution_vector import SolutionVector
 class QUBOLS:
 
     def __init__(self, A, b):
+        """Linear Solver using QUBO
+
+        Args:
+            A (np.matrix): matrix of the linear system
+            b (np.array): rhs of the linear system
+        """
 
         self.A = A 
         self.b = b
@@ -19,7 +25,7 @@ class QUBOLS:
 
     def solve(self, sampler = neal.SimulatedAnnealingSampler(), 
                     encoding=RealUnitQbitEncoding, nqbit=11, **kwargs):
-        """_summary_
+        """Solve the ,inear system
 
         Args:
             sampler (_type_, optional): _description_. Defaults to neal.SimulatedAnnealingSampler().
