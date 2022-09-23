@@ -1,7 +1,7 @@
 from sympy import Symbol
 from sympy.matrices import Matrix
 import numpy as np
-from qalcore.dwave.utils.encodings import RealUnitQbitEncoding
+from qalcore.dwave.qubols.encodings import RealUnitQbitEncoding
 from dwave.system import DWaveSampler , EmbeddingComposite
 import neal
 from dimod import ExactSolver
@@ -25,7 +25,7 @@ class QUBOLS:
 
     def solve(self, sampler = neal.SimulatedAnnealingSampler(), 
                     encoding=RealUnitQbitEncoding, nqbit=11, **kwargs):
-        """Solve the ,inear system
+        """Solve the linear system
 
         Args:
             sampler (_type_, optional): _description_. Defaults to neal.SimulatedAnnealingSampler().
