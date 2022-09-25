@@ -74,7 +74,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
         .. jupyter-execute:
 
-            from qiskit_research.vqls import VQLS
+            from qalcore.qiskit.vqls import VQLS
             from qiskit.circuit.library.n_local.real_amplitudes import RealAmplitudes
             from qiskit.algorithms.optimizers import COBYLA
             from qiskit.algorithms.linear_solvers.numpy_linear_solver import NumPyLinearSolver
@@ -396,7 +396,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
         # compute only the circuit for <0|V A_n ^* A_m V|0>
         # with n != m as the diagonal terms (n==m) always give a proba of 1.0
-        for ii, mi in range(len(self.matrix_circuits)):
+        for ii in range(len(self.matrix_circuits)):
             mi = self.matrix_circuits[ii]
 
             for jj in range(ii + 1, len(self.matrix_circuits)):

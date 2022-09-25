@@ -815,7 +815,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
         .. jupyter-execute:
 
-            from qiskit_research.vqls import VQLS
+            from qalcore.qiskit.vqls import VQLS
             from qiskit.circuit.library.n_local.real_amplitudes import RealAmplitudes
             from qiskit.algorithms.optimizers import COBYLA
             from qiskit.algorithms.linear_solvers.numpy_linear_solver import NumPyLinearSolver

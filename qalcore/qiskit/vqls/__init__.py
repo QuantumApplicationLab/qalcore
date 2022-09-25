@@ -16,10 +16,10 @@ Variational Quantum Linear Solver
 =======================================
 """
 
-from qiskit_research.vqls.vqls import VQLS
-from qiskit_research.vqls.hadamard_test import HadammardTest
-from qiskit_research.vqls.numpy_unitary_matrices import UnitaryDecomposition
-from qiskit_research.vqls.variational_linear_solver import (
+from qalcore.qiskit.vqls.vqls import VQLS
+from qalcore.qiskit.vqls.hadamard_test import HadammardTest
+from qalcore.qiskit.vqls.numpy_unitary_matrices import UnitaryDecomposition
+from qalcore.qiskit.vqls.variational_linear_solver import (
     VariationalLinearSolver,
     VariationalResult,
 )
