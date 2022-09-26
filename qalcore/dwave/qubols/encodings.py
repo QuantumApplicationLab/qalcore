@@ -60,6 +60,7 @@ class RealUnitQbitEncoding(BaseQbitEncoding):
     def __init__(self, nqbit, var_base_name):
         super().__init__(nqbit, var_base_name)
         self.base_exponent = 0
+        assert((nqbit-1)%2==0)
 
     def create_polynom(self):
         """
@@ -69,19 +70,32 @@ class RealUnitQbitEncoding(BaseQbitEncoding):
             sympy expression
         """
         out = 0.0
-        self.int_max = 0.0
-        for i in range(self.nqbit//2):
+
+        i = 0
+        self.int_max = 2**(i-self.base_exponent)
+
+        for i in range(1, (self.nqbit-1)//2):
             self.int_max += 2**(i-self.base_exponent)
-        for i in range(self.nqbit//2):
+
+        
+        i = 0
+        out += 2**(i-self.base_exponent)/self.int_max * self.variables[i]
+
+        for i in range(1, (self.nqbit-1)//2+1):
+
             out += 2**(i-self.base_exponent)/self.int_max * self.variables[i]
-            out -= 2**(i-self.base_exponent)/self.int_max * self.variables[self.nqbit//2+i]
+            out -= 2**(i-self.base_exponent)/self.int_max * self.variables[(self.nqbit-1)//2+i]
         return out
 
     def decode_polynom(self, data):
         out = 0.0
-        for i in range(self.nqbit//2):
+
+        i=0
+        out += 2**(i-self.base_exponent)/self.int_max * data[i]
+
+        for i in range(1, (self.nqbit-1)//2+1):
             out += 2**(i-self.base_exponent)/self.int_max * data[i]
-            out -= 2**(i-self.base_exponent)/self.int_max * data[self.nqbit//2+i]
+            out -= 2**(i-self.base_exponent)/self.int_max * data[(self.nqbit-1)//2+i]
         return out
 
 class PositiveQbitEncoding(BaseQbitEncoding):

@@ -44,7 +44,7 @@ class QUBOLS:
         self.lowest_sol = self.sampleset.lowest()
         return sol.decode_solution(self.lowest_sol.record[0][0])
 
-    def create_qubo_matrix(self, x):
+    def create_qubo_matrix(self, x, prec=None):
         """Create the QUBO dictionary requried by dwave solvers
         to solve the linear system
 
@@ -86,5 +86,17 @@ class QUBOLS:
 
             out[key] += m[0]
 
-        return out
+        if prec is None:
+            return out
+
+        elif prec is not None:
+            nremoved = 0
+            out_cpy = dict()
+            for k, v in out.items():
+                if np.abs(v)>prec:
+                    out_cpy[k] = v
+                else:
+                    nremoved += 1
+            print('Removed %d elements' %nremoved)
+            return out_cpy
 
