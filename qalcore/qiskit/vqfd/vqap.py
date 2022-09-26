@@ -11,6 +11,8 @@ See https://arxiv.org/abs/2106.09333
 
 
 
+from ast import operator
+from codecs import BOM_UTF16_BE
 from typing import Optional, Union, List, Callable, Tuple
 import numpy as np
 from qiskit.circuit.library.n_local.real_amplitudes import RealAmplitudes
@@ -41,7 +43,7 @@ from qiskit.opflow import (
 from qiskit.algorithms.optimizers import SLSQP, Minimizer, Optimizer
 from qiskit.opflow.gradients import GradientBase
 from qalcore.qiskit.vqfd.variational_fd_solver import VariationalFDSolver, VariationalFDSolverResult
-
+from qalcore.qiskit.vqfd.utils import ShiftOperator, ABSuper
 
 
 
@@ -104,6 +106,7 @@ class VQAP(VariationalAlgorithm, VariationalFDSolver):
     def __init__(
         self,
         ansatz: Optional[QuantumCircuit] = None,
+        boundary: Optional[str] = None,
         optimizer: Optional[Union[Optimizer, Minimizer]] = None,
         initial_point: Optional[np.ndarray] = None,
         gradient: Optional[Union[GradientBase, Callable]] = None,
@@ -155,6 +158,9 @@ class VQAP(VariationalAlgorithm, VariationalFDSolver):
         self._ansatz = None
         self.ansatz = ansatz
 
+        self._boundary = None
+        self.boundary = boundary
+
         self._optimizer = None
         self.optimizer = optimizer
 
@@ -167,6 +173,13 @@ class VQAP(VariationalAlgorithm, VariationalFDSolver):
 
         self._callback = None
         self.callback = callback
+
+        tol = 1E-3
+        self.tol = {
+            'Perdiodic': tol,
+            'Neumann': tol,
+            'Dirichlet': 0.0
+        }[self.boundary]
 
     @property
     def num_qubits(self) -> int:
@@ -209,6 +222,32 @@ class VQAP(VariationalAlgorithm, VariationalFDSolver):
         self.num_qubits = ansatz.num_qubits + 1
 
     @property
+    def boundary(self) -> str:
+        """getter for boundary prop
+
+        Returns:
+            str: value of boundary
+        """
+        return self._boundary
+
+    @boundary.setter
+    def boundary(self, boundary: Optional[str]):
+        """Setter for boundary prop
+
+        Args:
+            boundary (Optional[str]): desired boundary
+
+        Raises:
+            ValueError: id not recognized
+        """
+        if boundary is None:
+            boundary = 'Dirichlet'
+        self._boundary = boundary
+        if  self.boundary not in ['Neumann', 'Dirichlet', 'Periodic']:
+            raise ValueError('boundary must be Neumann, Dirichlet or Periodic not %s' %self.boundary)
+
+
+    @property
     def quantum_instance(self) -> Optional[QuantumInstance]:
         """Returns quantum instance."""
         return self._quantum_instance
@@ -249,7 +288,7 @@ class VQAP(VariationalAlgorithm, VariationalFDSolver):
 
         self._optimizer = optimizer
 
-    def construct_source_circuits(self, source: Union[np.ndarray, QuantumCircuit] ) -> None:
+    def construct_source_circuit(self, source: Union[np.ndarray, QuantumCircuit] ) -> None:
         """Constructs the different circuits needed to compute the loss function
 
         Args:
@@ -275,33 +314,213 @@ class VQAP(VariationalAlgorithm, VariationalFDSolver):
             if vec_norm != 0:
                 self.source_circuit.prepare_state(source / vec_norm)
 
-    def construct_discretization_circuit(self, npoints: int, boundary: str) -> None:
+    def construct_observable(self) -> None:
+        """Constructs all the observable required for the evaluation of the cost function
+        """
 
         # create the obsevable
         zero_op = (I + Z) / 2
-        self.fd_circuits = {
+        one_op = (I - Z) / 2
+        self.observables = {
             "I^(n-1)X" :  TensoredOp((self.num_qubits-1) * [I] ) ^ X,
             "Io^(n-1)X":  TensoredOp((self.num_qubits-1) * [zero_op] ) ^ X,
             "Io^(n-1)I":  TensoredOp((self.num_qubits-1) * [zero_op] ) ^ I,
+            "I^(n)O": TensoredOp((self.num_qubits) * [I]) ^ one_op
         }
 
+    def construct_expectation(
+        self,
+        parameter: Union[List[float], List[Parameter], np.ndarray],
+        circuit: QuantumCircuit,
+        observable: OperatorBase,
+    ) -> Union[OperatorBase, Tuple[OperatorBase, ExpectationBase]]:
+        r"""
+        Generate the ansatz circuit and expectation value measurement, and return their
+        runnable composition.
+
+        Args:
+            parameter: Parameters for the ansatz circuit.
+            circuit: one of the circuit required for the cost calculation
+
+        Returns:
+            The Operator equalling the measurement of the circuit :class:`StateFn` by the
+            observable's expectation :class:`StateFn`
+
+        """
+
+        # assign param to circuit
+        wave_function = circuit.assign_parameters(parameter)
+
+        # compose the statefn of the observable on the circuit
+        return ~StateFn(observable) @ StateFn(wave_function)
+
+    def construct_shift_ansatz(self):
+        """return a circuits that compose the ansatz and the shift operator
+        """
+        self.shifted_ansatz = self.ansatz.compose(ShiftOperator(self.num_qubits))
+
+    def assemble_circuits(self):
+        """Creates a list of circuits/observable/weight required for the calculation
+        of the cost function
+
+        Returns:
+            Tuple(): circuits, observables, weights
+        """
+
+        circuits, observables, weights = [], [], []
+
+        # circuits for the numerator
+        circuits += [
+            ABSuper(
+                self.num_qubits,
+                self.source_circuit,
+                self.ansatz
+            )
+        ]
+        # observable for the numerator
+        observables += [
+            self.observables["I^(n)O"]
+        ]
+
+        # weiht for numerator
+        weights += [1]
+
+        # circuits for denominator
+        circuits += [
+            self.ansatz,
+            self.shifted_ansatz,
+        ]
+
+        # circuits for denominator
+        observables += [
+            self.observables["I^(n-1)X"],
+            self.observables["I^(n-1)X"]
+        ]
+
+        # weights for denom
+        weights += [-1, -1]
+
+        # added terms for different bc
+        if self.boundary == 'Dirichlet':
+            circuits += [ self.shifted_ansatz ]
+            observables += [self.observables["Io^(n-1)X"]]
+            weights += [1]
+
+        elif self.boundary == 'Neumann':
+            circuits += [ 
+                self.shifted_ansatz,
+                self.shifted_ansatz]
+            observables += [
+                self.observables["Io^(n-1)X"],
+                self.observables["Io^(n-1)I"]]
+                
+            weights += [1, -1]
+
+        return circuits, observables, weights
+
+    def process_probability_circuit_output(
+        self,
+        probability_circuit_output: List,
+        weights: List
+    ) -> float:
+        """Compute the final cost function from the sampled circuit values
+
+        Args:
+            probability_circuit_output (List): _description_
+            weights (List): _description_
+
+        Returns:
+            float: _description_
+        """
+
+        numerator = -0.5*probability_circuit_output[0]**2
+        denominator = 2.0
+        for val, w in zip(probability_circuit_output[1:], weights[1:]):
+            denominator += w*val
+        
+        return numerator/denominator + self.tol
+         
+
+    def get_cost_evaluation_function(
+        self,
+        boundary: str,
+    ) -> Callable[[np.ndarray], Union[float, List[float]]]:
+        """Generate the cost function of the minimazation process
+
+        Args:
+            circuits (List[QuantumCircuit]): circuits necessary to compute the cost function
+
+        Raises:
+            RuntimeError: If the ansatz is not parametrizable
+
+        Returns:
+            Callable[[np.ndarray], Union[float, List[float]]]: the cost function
+        """
+
+        num_parameters = self.ansatz.num_parameters
+        if num_parameters == 0:
+            raise RuntimeError(
+                "The ansatz must be parameterized, but has 0 free parameters."
+            )
+        circuits, observables, weights = self.assemble_circuits(boundary)
+        ansatz_params = self.ansatz.parameters
+        expect_ops = []
+        for circ, obs in zip(circuits, observables):
+            expect_ops.append(self.construct_expectation(ansatz_params, circ, obs))
+
+        expect_ops = ListOp(expect_ops)
+
+        def cost_evaluation(parameters):
+
+            # Create dict associating each parameter with the lists of parameterization values for it
+            parameter_sets = np.reshape(parameters, (-1, num_parameters))
+            param_bindings = dict(
+                zip(ansatz_params, parameter_sets.transpose().tolist())
+            )
+
+            # TODO define a multiple sampler, one for each ops, to leverage caching
+            # get the sampled output
+            out = []
+            for op in expect_ops:
+                sampled_expect_op = self._circuit_sampler.convert(
+                    op, params=param_bindings
+                )
+                # out.append(
+                #     self.get_probability_from_expected_value(
+                #         sampled_expect_op.eval()[0]
+                #     )
+                # )
+                out.append(sampled_expect_op.eval()[0])
+
+            # compute the total cost
+            cost = self.process_probability_circuit_output(out, weights)
+
+            # get the internediate results if required
+            if self._callback is not None:
+                for param_set in parameter_sets:
+                    self._eval_count += 1
+                    self._callback(self._eval_count, cost, param_set)
+            else:
+                self._eval_count += 1
+
+            return cost
+
+        return cost_evaluation
 
     def solve(
         self, 
         source: Union[np.ndarray, QuantumCircuit],
-        npoints: int,
-        boundary: str,
     ) -> VariationalFDSolverResult:
 
-        assert boundary in ['Neumann', 'Dirichlet', 'Periodic']
-        assert np.log2(npoints)%2 == 0
+        
 
-        self.construct_source_circuits(source)
-        self.construct_discretization_circuit()
+
+        self.construct_source_circuit(source)
+        self.construct_observable()
 
 
         # get the cost evaluation function
-        cost_evaluation = self.get_cost_evaluation_function(circuits)
+        cost_evaluation = self.get_cost_evaluation_function(self.boundary)
 
         if callable(self.optimizer):
             opt_result = self.optimizer(  # pylint: disable=not-callable
