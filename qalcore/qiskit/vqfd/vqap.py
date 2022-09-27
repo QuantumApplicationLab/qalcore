@@ -10,9 +10,6 @@ See https://arxiv.org/abs/2106.09333
 """
 
 
-
-from ast import operator
-from codecs import BOM_UTF16_BE
 from typing import Optional, Union, List, Callable, Tuple
 import numpy as np
 from qiskit.circuit.library.n_local.real_amplitudes import RealAmplitudes
@@ -21,10 +18,20 @@ from qiskit import QuantumCircuit
 from qiskit.circuit import Parameter
 from qiskit.algorithms.variational_algorithm import VariationalAlgorithm
 from qiskit.providers import Backend
+from qiskit.quantum_info.operators import Operator
 from qiskit.quantum_info.operators.base_operator import BaseOperator
 from qiskit.utils import QuantumInstance
 from qiskit.utils.backend_utils import is_aer_provider, is_statevector_backend
 from qiskit.utils.validation import validate_min
+
+from qiskit.algorithms.linear_solvers.observables.linear_system_observable import (
+    LinearSystemObservable,
+)
+
+from qiskit.algorithms.minimum_eigen_solvers.vqe import (
+    _validate_bounds,
+    _validate_initial_point,
+)
 
 
 from qiskit.opflow import (
@@ -42,14 +49,14 @@ from qiskit.opflow import (
 
 from qiskit.algorithms.optimizers import SLSQP, Minimizer, Optimizer
 from qiskit.opflow.gradients import GradientBase
-from qalcore.qiskit.vqfd.variational_fd_solver import VariationalFDSolver, VariationalFDSolverResult
-from qalcore.qiskit.vqfd.utils import ShiftOperator, ABSuper
+from qalcore.qiskit.vqls.variational_linear_solver import (
+    VariationalLinearSolver,
+    VariationalLinearSolverResult,
+)
+from qalcore.qiskit.vqfd.utils import ShiftOperator, HadamardCircuitSuperposition
 
 
-
-
-
-class VQAP(VariationalAlgorithm, VariationalFDSolver):
+class VQAP(VariationalAlgorithm, VariationalLinearSolver):
 
     r"""Systems of linear equations arise naturally in many real-life applications in a wide range
     of areas, such as in the solution of Partial Differential Equations, the calibration of
@@ -155,6 +162,10 @@ class VQAP(VariationalAlgorithm, VariationalFDSolver):
 
         self._num_qubits = None
 
+        self._initial_point = None
+        self.initial_point = initial_point
+        self._max_evals_grouped = max_evals_grouped
+
         self._ansatz = None
         self.ansatz = ansatz
 
@@ -163,6 +174,9 @@ class VQAP(VariationalAlgorithm, VariationalFDSolver):
 
         self._optimizer = None
         self.optimizer = optimizer
+
+        self._gradient = None
+        self.gradient = gradient
 
 
         self._quantum_instance = None
@@ -176,10 +190,14 @@ class VQAP(VariationalAlgorithm, VariationalFDSolver):
 
         tol = 1E-3
         self.tol = {
-            'Perdiodic': tol,
+            'Periodic': tol,
             'Neumann': tol,
             'Dirichlet': 0.0
         }[self.boundary]
+
+        self.observables = None
+        self.source_circuit = None
+        self.shifted_ansatz = None
 
     @property
     def num_qubits(self) -> int:
@@ -219,7 +237,7 @@ class VQAP(VariationalAlgorithm, VariationalFDSolver):
             ansatz = RealAmplitudes()
 
         self._ansatz = ansatz
-        self.num_qubits = ansatz.num_qubits + 1
+        self.num_qubits = ansatz.num_qubits
 
     @property
     def boundary(self) -> str:
@@ -266,6 +284,40 @@ class VQAP(VariationalAlgorithm, VariationalFDSolver):
             statevector=is_statevector_backend(quantum_instance.backend),
             param_qobj=is_aer_provider(quantum_instance.backend),
         )
+
+    @property
+    def initial_point(self) -> Optional[np.ndarray]:
+        """Returns initial point"""
+        return self._initial_point
+
+    @initial_point.setter
+    def initial_point(self, initial_point: np.ndarray):
+        """Sets initial point"""
+        self._initial_point = initial_point
+
+    @property
+    def max_evals_grouped(self) -> int:
+        """Returns max_evals_grouped"""
+        return self._max_evals_grouped
+
+    @max_evals_grouped.setter
+    def max_evals_grouped(self, max_evals_grouped: int):
+        """Sets max_evals_grouped"""
+        self._max_evals_grouped = max_evals_grouped
+        self.optimizer.set_max_evals_grouped(max_evals_grouped)
+
+    @property
+    def callback(self) -> Optional[Callable[[int, np.ndarray, float, float], None]]:
+        """Returns callback"""
+        return self._callback
+
+    @callback.setter
+    def callback(
+        self, callback: Optional[Callable[[int, np.ndarray, float, float], None]]
+    ):
+        """Sets callback"""
+        self._callback = callback
+
 
     @property
     def optimizer(self) -> Optimizer:
@@ -325,7 +377,8 @@ class VQAP(VariationalAlgorithm, VariationalFDSolver):
             "I^(n-1)X" :  TensoredOp((self.num_qubits-1) * [I] ) ^ X,
             "Io^(n-1)X":  TensoredOp((self.num_qubits-1) * [zero_op] ) ^ X,
             "Io^(n-1)I":  TensoredOp((self.num_qubits-1) * [zero_op] ) ^ I,
-            "I^(n)O": TensoredOp((self.num_qubits) * [I]) ^ one_op
+            "I^(n)O": TensoredOp((self.num_qubits) * [I]) ^ one_op,
+            "XI^(n)": X ^ TensoredOp((self.num_qubits) * [I]) 
         }
 
     def construct_expectation(
@@ -354,6 +407,31 @@ class VQAP(VariationalAlgorithm, VariationalFDSolver):
         # compose the statefn of the observable on the circuit
         return ~StateFn(observable) @ StateFn(wave_function)
 
+    def get_matrix(self):
+        """Returns the finite difference matrix
+        """
+
+        if self.observables is None:
+            self.construct_observable()
+
+        S = np.real(Operator(ShiftOperator(self.num_qubits)).data)
+
+        H1 = np.real(Operator(self.observables["I^(n-1)X"]).data)
+        H2 = S.T @ H1 @ S
+        H3 = S.T @ (np.real(Operator(self.observables["Io^(n-1)X"]).data)) @ S
+        H4 = S.T @ (np.real(Operator(self.observables["Io^(n-1)I"]).data)) @ S
+
+        size = 2**self.num_qubits
+        A = 2*np.eye(size) - H1 - H2
+ 
+        if self.boundary == 'Dirichlet':
+            A += H3
+
+        if self.boundary == 'Neumann':
+            A += H3 - H4
+
+        return A
+
     def construct_shift_ansatz(self):
         """return a circuits that compose the ansatz and the shift operator
         """
@@ -367,23 +445,23 @@ class VQAP(VariationalAlgorithm, VariationalFDSolver):
             Tuple(): circuits, observables, weights
         """
 
-        circuits, observables, weights = [], [], []
+        if self.shifted_ansatz is None:
+            self.construct_shift_ansatz()
+
+        circuits, observables = [], []
 
         # circuits for the numerator
         circuits += [
-            ABSuper(
-                self.num_qubits,
+            HadamardCircuitSuperposition(
+                self.num_qubits+1,
                 self.source_circuit,
                 self.ansatz
             )
         ]
         # observable for the numerator
         observables += [
-            self.observables["I^(n)O"]
+            self.observables["XI^(n)"]
         ]
-
-        # weiht for numerator
-        weights += [1]
 
         # circuits for denominator
         circuits += [
@@ -391,37 +469,33 @@ class VQAP(VariationalAlgorithm, VariationalFDSolver):
             self.shifted_ansatz,
         ]
 
-        # circuits for denominator
-        observables += [
-            self.observables["I^(n-1)X"],
-            self.observables["I^(n-1)X"]
-        ]
-
-        # weights for denom
-        weights += [-1, -1]
-
-        # added terms for different bc
-        if self.boundary == 'Dirichlet':
-            circuits += [ self.shifted_ansatz ]
-            observables += [self.observables["Io^(n-1)X"]]
-            weights += [1]
+        # observable for the denominator
+        if self.boundary == 'Periodic':
+            observables += [
+                - self.observables["I^(n-1)X"],
+                - self.observables["I^(n-1)X"]
+            ]
+        
+        elif self.boundary == 'Dirichlet':
+            observables += [
+                - self.observables["I^(n-1)X"],
+                - self.observables["I^(n-1)X"] + self.observables["Io^(n-1)X"]
+                ]
 
         elif self.boundary == 'Neumann':
-            circuits += [ 
-                self.shifted_ansatz,
-                self.shifted_ansatz]
             observables += [
-                self.observables["Io^(n-1)X"],
-                self.observables["Io^(n-1)I"]]
-                
-            weights += [1, -1]
+                - self.observables["I^(n-1)X"],
+                self.observables["I^(n-1)X"] + self.observables["Io^(n-1)X"] 
+                - self.observables["Io^(n-1)I"]
+            ]
+            
 
-        return circuits, observables, weights
+        return circuits, observables
 
     def process_probability_circuit_output(
         self,
         probability_circuit_output: List,
-        weights: List
+        return_norm: bool = False
     ) -> float:
         """Compute the final cost function from the sampled circuit values
 
@@ -432,18 +506,55 @@ class VQAP(VariationalAlgorithm, VariationalFDSolver):
         Returns:
             float: _description_
         """
+        if return_norm:
+            numerator = probability_circuit_output[0]
+        else:
+            numerator = -0.5*probability_circuit_output[0]**2
 
-        numerator = -0.5*probability_circuit_output[0]**2
-        denominator = 2.0
-        for val, w in zip(probability_circuit_output[1:], weights[1:]):
-            denominator += w*val
-        
+        denominator = 2.0 + probability_circuit_output[1] + probability_circuit_output[2]        
         return numerator/denominator + self.tol
          
 
+    def get_norm_solution(self) -> float:
+        """Compute the norm of the solution
+
+        Returns:
+            float: _description_
+        """
+
+        num_parameters = self.ansatz.num_parameters
+        if num_parameters == 0:
+            raise RuntimeError(
+                "The ansatz must be parameterized, but has 0 free parameters."
+            )
+        circuits, observables = self.assemble_circuits()
+        ansatz_params = self.ansatz.parameters
+        expect_ops = []
+        for circ, obs in zip(circuits, observables):
+            expect_ops.append(self.construct_expectation(ansatz_params, circ, obs))
+
+        expect_ops = ListOp(expect_ops)
+
+        # Create dict associating each parameter with the lists of parameterization values for it
+        parameter_sets = np.reshape(ansatz_params, (-1, num_parameters))
+        param_bindings = dict(
+            zip(ansatz_params, parameter_sets.transpose().tolist())
+        )
+
+        # TODO define a multiple sampler, one for each ops, to leverage caching
+        # get the sampled output
+        out = []
+        for op in expect_ops:
+            sampled_expect_op = self._circuit_sampler.convert(
+                op, params=param_bindings)
+            out.append(sampled_expect_op.eval()[0])
+
+        # compute the total cost
+        return self.process_probability_circuit_output(out, return_norm=True)
+
+
     def get_cost_evaluation_function(
         self,
-        boundary: str,
     ) -> Callable[[np.ndarray], Union[float, List[float]]]:
         """Generate the cost function of the minimazation process
 
@@ -462,7 +573,7 @@ class VQAP(VariationalAlgorithm, VariationalFDSolver):
             raise RuntimeError(
                 "The ansatz must be parameterized, but has 0 free parameters."
             )
-        circuits, observables, weights = self.assemble_circuits(boundary)
+        circuits, observables = self.assemble_circuits()
         ansatz_params = self.ansatz.parameters
         expect_ops = []
         for circ, obs in zip(circuits, observables):
@@ -485,15 +596,10 @@ class VQAP(VariationalAlgorithm, VariationalFDSolver):
                 sampled_expect_op = self._circuit_sampler.convert(
                     op, params=param_bindings
                 )
-                # out.append(
-                #     self.get_probability_from_expected_value(
-                #         sampled_expect_op.eval()[0]
-                #     )
-                # )
                 out.append(sampled_expect_op.eval()[0])
 
             # compute the total cost
-            cost = self.process_probability_circuit_output(out, weights)
+            cost = self.process_probability_circuit_output(out)
 
             # get the internediate results if required
             if self._callback is not None:
@@ -507,20 +613,121 @@ class VQAP(VariationalAlgorithm, VariationalFDSolver):
 
         return cost_evaluation
 
+    def _calculate_observable(
+        self,
+        solution: QuantumCircuit,
+        observable: Optional[Union[LinearSystemObservable, BaseOperator]] = None,
+        observable_circuit: Optional[QuantumCircuit] = None,
+        post_processing: Optional[
+            Callable[[Union[float, List[float]]], Union[float, List[float]]]
+        ] = None,
+    ) -> Tuple[Union[float, List[float]], Union[float, List[float]]]:
+        """Calculates the value of the observable(s) given.
+
+        Args:
+            solution: The quantum circuit preparing the solution x to the system.
+            observable: Information to be extracted from the solution.
+            observable_circuit: Circuit to be applied to the solution to extract information.
+            post_processing: Function to compute the value of the observable.
+
+        Returns:
+            The value of the observable(s) and the circuit results before post-processing as a
+             tuple.
+        """
+        # exit if nothing is provided
+        if observable is None and observable_circuit is None:
+            return None, None
+
+        # Get the number of qubits
+        nb = solution.num_qubits
+
+        # if the observable is given construct post_processing and observable_circuit
+        if observable is not None:
+            observable_circuit = observable.observable_circuit(nb)
+            post_processing = observable.post_processing
+
+            if isinstance(observable, LinearSystemObservable):
+                observable = observable.observable(nb)
+
+        is_list = True
+        if not isinstance(observable_circuit, list):
+            is_list = False
+            observable_circuit = [observable_circuit]
+            observable = [observable]
+
+        expectations = []
+        for circ, obs in zip(observable_circuit, observable):
+            circuit = QuantumCircuit(solution.num_qubits)
+            circuit.append(solution, circuit.qubits)
+            circuit.append(circ, range(nb))
+            expectations.append(~StateFn(obs) @ StateFn(circuit))
+
+        if is_list:
+            # execute all in a list op to send circuits in batches
+            expectations = ListOp(expectations)
+        else:
+            expectations = expectations[0]
+
+        # check if an expectation converter is given
+        if self._expectation is not None:
+            expectations = self._expectation.convert(expectations)
+        # if otherwise a backend was specified, try to set the best expectation value
+        elif self._circuit_sampler is not None:
+            if is_list:
+                op = expectations.oplist[0]
+            else:
+                op = expectations
+            self._expectation = ExpectationFactory.build(
+                op, self._circuit_sampler.quantum_instance
+            )
+
+        if self._circuit_sampler is not None:
+            expectations = self._circuit_sampler.convert(expectations)
+
+        # evaluate
+        expectation_results = expectations.eval()
+
+        # apply post_processing
+        result = post_processing(expectation_results, nb)
+
+        return result, expectation_results
+
     def solve(
         self, 
         source: Union[np.ndarray, QuantumCircuit],
-    ) -> VariationalFDSolverResult:
+        observable: Optional[
+            Union[
+                LinearSystemObservable,
+                BaseOperator,
+                List[LinearSystemObservable],
+                List[BaseOperator],
+            ]
+        ] = None,
+        observable_circuit: Optional[
+            Union[QuantumCircuit, List[QuantumCircuit]]
+        ] = None,
+        post_processing: Optional[
+            Callable[[Union[float, List[float]]], Union[float, List[float]]]
+        ] = None,
+    ) -> VariationalLinearSolverResult:
 
         
-
-
         self.construct_source_circuit(source)
         self.construct_observable()
+        self.construct_shift_ansatz()
 
+        # set an expectation for this algorithm run (will be reset to None at the end)
+        initial_point = _validate_initial_point(self.initial_point, self.ansatz)
+        bounds = _validate_bounds(self.ansatz)
+
+        # Convert the gradient operator into a callable function that is compatible with the
+        # optimization routine.
+        gradient = self._gradient
+
+        self._eval_count = 0
 
         # get the cost evaluation function
-        cost_evaluation = self.get_cost_evaluation_function(self.boundary)
+        cost_evaluation = self.get_cost_evaluation_function()
 
         if callable(self.optimizer):
             opt_result = self.optimizer(  # pylint: disable=not-callable
@@ -532,7 +739,7 @@ class VQAP(VariationalAlgorithm, VariationalFDSolver):
             )
 
         # create the solution
-        solution = VariationalFDSolverResult()
+        solution = VariationalLinearSolverResult()
 
         # optimization data
         solution.optimal_point = opt_result.x
@@ -543,5 +750,9 @@ class VQAP(VariationalAlgorithm, VariationalFDSolver):
         # final ansatz
         solution.state = self.ansatz.assign_parameters(solution.optimal_parameters)
 
+        # observable
+        solution.observable = self._calculate_observable(
+            solution.state, observable, observable_circuit, post_processing
+        )
 
         return solution

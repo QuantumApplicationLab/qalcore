@@ -8,11 +8,11 @@ from qiskit.circuit.parameterexpression import ParameterValueType
 from qiskit.circuit.register import Register
 from qiskit.circuit.bit import Bit
 
-class ABSuper(QuantumCircuit):
+class HadamardCircuitSuperposition(QuantumCircuit):
 
     def __init__(
         self,
-        *regs: Union[Register, int, Sequence[Bit]],
+        num_qubit: int,
         circuit_A: QuantumCircuit,
         circuit_B: QuantumCircuit,
         name: Optional[str] = None,
@@ -20,7 +20,7 @@ class ABSuper(QuantumCircuit):
         metadata: Optional[Dict] = None,
     ):
 
-        super().__init__(*regs, name, global_phase, metadata)
+        super().__init__(num_qubit)
 
         self.h(0)
         self.compose(circuit_A.control(1), qubits=list(range(0, self.num_qubits)), inplace=True)
@@ -32,15 +32,18 @@ class ShiftOperator(QuantumCircuit):
 
     def __init__(
         self,
-        *regs: Union[Register, int, Sequence[Bit]],
+        regs: Union[Register, int, Sequence[Bit]],
         name: Optional[str] = None,
         global_phase: ParameterValueType = 0,
-        metadata: Optional[Dict] = None
+        metadata: Optional[Dict] = None,
+        use_mct_ancilla: bool = False
     ):
 
-        super().__init__(*regs, name, global_phase, metadata)
+        self.qreg = QuantumRegister(regs)
+        super().__init__(self.qreg)
+        
 
-        if not self.use_mct_ancilla:
+        if not use_mct_ancilla:
             for i in reversed(range(1, self.num_qubits)):
                 self.mct(self.qreg[:i], self.qreg[i])
             self.x(self.qreg[0])
