@@ -32,6 +32,9 @@ from qalcore.qiskit.vqls.numpy_unitary_matrices import UnitaryDecomposition
 
 from qiskit.quantum_info import Operator
 
+
+from qalcore.qiskit.vqls import VQLS
+
 if has_aer():
     from qiskit import Aer
 
