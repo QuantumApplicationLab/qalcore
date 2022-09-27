@@ -2,10 +2,13 @@ from multiprocessing.sharedctypes import Value
 import numpy as np
 from qiskit_ibm_runtime.program import ResultDecoder
 from scipy.optimize import OptimizeResult
-from qiskit_ibm_runtime import QiskitRuntimeService
+
 from qiskit.circuit.library.n_local.real_amplitudes import RealAmplitudes
 
-
+try:
+    from qiskit_ibm_runtime import QiskitRuntimeService
+except:
+    print('Please install qiskit IBM runtime')
 class VQLSResultDecoder(ResultDecoder):
     @classmethod
     def decode(cls, data):
