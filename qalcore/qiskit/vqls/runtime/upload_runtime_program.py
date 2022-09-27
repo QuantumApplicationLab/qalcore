@@ -2,8 +2,6 @@
 # Upload the vqls_runtime_program to IBMQ
 ############################################
 
-from qiskit_ibm_runtime import QiskitRuntimeService
-
 
 def get_metadata():
 
@@ -71,6 +69,12 @@ def get_metadata():
 
 
 # if __name__ == "__main__":
+
+
+    # try:
+    #     from qiskit_ibm_runtime import QiskitRuntimeService
+    # except:
+    #     print('Please install qiskit IBM runtime')
 
 #     # credential
 #     ibmq_token = ""
