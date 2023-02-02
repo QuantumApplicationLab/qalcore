@@ -59,7 +59,7 @@ from qalcore.qiskit.vqls.variational_linear_solver import (
     VariationalLinearSolverResult,
 )
 from qalcore.qiskit.vqls.numpy_unitary_matrices import UnitaryDecomposition
-from qalcore.qiskit.vqls.hadamard_test import HadammardTest
+from qalcore.qiskit.vqls.hadamard_test import HadammardTest, HadammardOverlapTest, LocalHadammardTest
 
 
 class VQLS(VariationalAlgorithm, VariationalLinearSolver):
@@ -122,10 +122,12 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         initial_point: Optional[np.ndarray] = None,
         gradient: Optional[Union[GradientBase, Callable]] = None,
         expectation: Optional[ExpectationBase] = None,
-        include_custom: bool = False,
-        max_evals_grouped: int = 1,
+        include_custom: Optional[bool] = False,
+        max_evals_grouped: Optional[int] = 1,
         callback: Optional[Callable[[int, np.ndarray, float, float], None]] = None,
         quantum_instance: Optional[Union[Backend, QuantumInstance]] = None,
+        use_overlap_test: Optional[bool] = False,
+        use_local_cost_function: Optional[bool] = False,
     ) -> None:
         r"""
         Args:
@@ -201,6 +203,12 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         self.matrix_circuits = None
         self.num_hdr = None
         self.observable = None
+
+        self._use_overlap_test = None 
+        self.use_overlap_test = use_overlap_test
+
+        self._use_local_cost_function = None
+        self.use_local_cost_function = use_local_cost_function
 
     @property
     def num_qubits(self) -> int:
@@ -316,6 +324,26 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
         self._optimizer = optimizer
 
+    @property
+    def use_overlap_test(self) -> bool:
+        """return the choice for overlap hadammard test"""
+        return self._use_overlap_test
+
+    @use_overlap_test.setter
+    def use_overlap_test(self, use_overlap_test: bool) -> None:
+        """Set the choice for using overlap hadammard test"""
+        self._use_overlap_test = use_overlap_test
+
+    @property
+    def use_local_cost_function(self) -> bool:
+        """return type of cost function"""
+        return self._use_local_cost_function
+
+    @use_local_cost_function.setter
+    def use_local_cost_function(self, use_local_cost_function: bool) -> None:
+        """Set the type of cost function"""
+        self._use_local_cost_function = use_local_cost_function
+
     def construct_circuit(
         self,
         matrix: Union[np.ndarray, QuantumCircuit, List],
@@ -394,7 +422,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         circuits = []
         self.num_hdmr = 0
 
-        # compute only the circuit for <0|V A_n ^* A_m V|0>
+        # create only the circuit for <0|V A_n ^* A_m V|0>
         # with n != m as the diagonal terms (n==m) always give a proba of 1.0
         for ii in range(len(self.matrix_circuits)):
             mi = self.matrix_circuits[ii]
@@ -409,11 +437,53 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
                 self.num_hdmr += 1
 
-        for mi in self.matrix_circuits:
-            circuits += HadammardTest(
-                operators=[self.ansatz, mi.circuit, self.vector_circuit.inverse()],
-                apply_measurement=appply_explicit_measurement,
-            )
+        # local cost function
+        if self._use_local_cost_function:
+
+            if self._use_overlap_test:
+                raise ValueError('Hadammard Overlap Tests not supported with local cost function')
+            
+            num_z = self.matrix_circuits[0].num_qubits
+
+            # create the circuits for <0| U^* A_l V(Zj . Ij|) V^* Am^* U|0>
+            for ii in range(len(self.matrix_circuits)):
+                mi = self.matrix_circuits[ii]
+
+                for jj in range(ii, len(self.matrix_circuits)):
+                    mj = self.matrix_circuits[jj]
+
+                    for iq in range(num_z):
+
+                        circuits += LocalHadammardTest(
+                            operators = [self.vector_circuit, mi, mj],
+                            index_zgate = iq,
+                            apply_initial_state = self.ansatz,
+                            apply_measurement = appply_explicit_measurement 
+                        )
+
+        # global cost function 
+        else:
+            # create the circuits for <0|U^* A_l V|0\rangle\langle 0| V^* Am^* U|0>
+            # either using overal test or hadammard test
+            if self._use_overlap_test:
+
+                for ii in range(len(self.matrix_circuits)):
+                    mi = self.matrix_circuits[ii]
+
+                    for jj in range(ii, len(self.matrix_circuits)):
+                        mj = self.matrix_circuits[jj]
+
+                        circuits += HadammardOverlapTest(
+                            operators = [self.vector_circuit, mi, mj],
+                            apply_initial_state = self.ansatz,
+                            apply_measurement = appply_explicit_measurement 
+                        )
+            else:
+                for mi in self.matrix_circuits:
+                    circuits += HadammardTest(
+                        operators=[self.ansatz, mi.circuit, self.vector_circuit.inverse()],
+                        apply_measurement=appply_explicit_measurement,
+                    )
 
         return circuits
 
@@ -509,27 +579,27 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         cii_coeffs, cij_coeffs = self.get_hadamard_sum_coeffcients()
 
         # compute all the terms in <\phi|\phi> = \sum c_i* cj <0|V Ai* Aj V|0>
-        phi_phi_overlap = self._compute_phi_overlap(
+        phi_phi = self._compute_phi_phi(
             cii_coeffs, cij_coeffs, probabiliy_circuit_output
         )
 
         # compute all the terms in |<b|\phi>|^2 = \sum c_i* cj <0|U* Ai V|0><0|V* Aj* U|0>
-        b_phi_overlap = self._compute_bphi_overlap(
+        b_phi= self._compute_b_phi(
             cii_coeffs, cij_coeffs, probabiliy_circuit_output
         )
 
         # overall cost
-        cost = 1.0 - np.real(b_phi_overlap / phi_phi_overlap)
+        cost = 1.0 - np.real(b_phi / phi_phi)
         print("Cost function %f" % cost)
         return cost
 
-    def _compute_phi_overlap(
+    def _compute_phi_phi(
         self,
         cii_coeff: np.ndarray,
         cij_coeff: np.ndarray,
         probabiliy_circuit_output: List,
     ) -> float:
-        r"""Compute the state overlap
+        r"""Compute <phi|phi>
 
         .. math::
             \\langle\\Phi|\\Phi\\rangle = \\sum_{nm} c_n^*c_m \\langle 0|V^* U_n^* U_m V|0\\rangle
@@ -543,30 +613,30 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         """
 
         # compute all the terms in <\phi|\phi> = \sum c_i* cj <0|V Ai* Aj V|0>
-        phi_phi_overlap = np.array(probabiliy_circuit_output)[: 2 * self.num_hdmr]
-        if phi_phi_overlap.dtype != "complex128":
-            phi_phi_overlap = phi_phi_overlap.astype("complex128")
-        phi_phi_overlap *= np.array([1.0, 1.0j] * self.num_hdmr)
-        phi_phi_overlap = phi_phi_overlap.reshape(-1, 2).sum(1)
+        phi_phi= np.array(probabiliy_circuit_output)[: 2 * self.num_hdmr]
+        if phi_phi.dtype != "complex128":
+            phi_phi = phi_phi.astype("complex128")
+        phi_phi *= np.array([1.0, 1.0j] * self.num_hdmr)
+        phi_phi = phi_phi.reshape(-1, 2).sum(1)
 
-        phi_phi_overlap *= cij_coeff
-        phi_phi_overlap = phi_phi_overlap.sum()
-        phi_phi_overlap += phi_phi_overlap.conj()
+        phi_phi *= cij_coeff
+        phi_phi = phi_phi.sum()
+        phi_phi += phi_phi.conj()
 
         # add the diagonal terms
         # since <0|V Ai* Aj V|0> = 1 we simply
         # add the sum of the cici coeffs
-        phi_phi_overlap += cii_coeff.sum()
+        phi_phi += cii_coeff.sum()
 
-        return phi_phi_overlap
+        return phi_phi
 
-    def _compute_bphi_overlap(
+    def _compute_b_phi(
         self,
         cii_coeffs: np.ndarray,
         cij_coeffs: np.ndarray,
         probabiliy_circuit_output: List,
     ) -> float:
-        """Compute the overlap
+        """Compute |<b|phi>|^2
 
         .. math::
             |\\langle b|\\Phi\\rangle|^2 = \\sum_{nm} c_n^*c_m \\langle 0|V^* U_n^* U_b |0 \\rangle \\langle 0|U_b^* U_m V |0\\rangle
@@ -579,32 +649,109 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         Returns:
             float: value of the sum
         """
+        if self._use_local_cost_function:
 
-        # compute <0|V* Ai* U|0> = p[k] + 1.0j p[k+1]
-        # with k = 2*(self.num_hdmr + i)
-        bphi_terms = np.array(probabiliy_circuit_output)[2 * self.num_hdmr :]
-        if bphi_terms.dtype != "complex128":
-            bphi_terms = bphi_terms.astype("complex128")
-        bphi_terms *= np.array([1.0, 1.0j] * int(len(bphi_terms) / 2))
-        bphi_terms = bphi_terms.reshape(-1, 2).sum(1)
+            # compute <0|V* Ai* U|Zj><Zj|U* Aj* V> = p[k] + 1.0j p[k+1]
+            # with k = 2*(self.num_hdmr + f(ij))
+            bphi_terms = np.array(probabiliy_circuit_output)[2 * self.num_hdmr :]
+            if bphi_terms.dtype != "complex128":
+                bphi_terms = bphi_terms.astype("complex128")
+            bphi_terms *= np.array([1.0, 1.0j] * int(len(bphi_terms) / 2))
+            bphi_terms = bphi_terms.reshape(-1, 2).sum(1) 
+            num_zgate = self.matrix_circuits[0].num_qubits
+            bphi_terms = bphi_terms.reshape(-1, num_zgate).sum(1)
 
-        # init the final result
-        b_phi_overlap = 0.0 + 0.0j
-        nterm = len(bphi_terms)
-        iterm = 0
-        for i in range(nterm):
-            # add |c_i|^2 <0|V* Ai* U|0> * <0|U* Ai V|0>
-            xii = cii_coeffs[i] * bphi_terms[i] * bphi_terms[i].conj()
-            b_phi_overlap += xii
-            for j in range(i + 1, nterm):
-                # add c_i* c_j <0|V* Ai* U|0> * <0|U* Aj V|0>
-                xij = cij_coeffs[iterm] * bphi_terms[i] * bphi_terms[j].conj()
-                b_phi_overlap += xij
-                # add c_j* c_i <0|V* Aj* U|0> * <0|U* Ai V|0>
-                b_phi_overlap += xij.conj()
-                iterm += 1
+            # init the final result
+            b_phi = 0.0 + 0.0j
+            nterm = len(bphi_terms)
+            kterm, iiterm, ijterm = 0, 0, 0
 
-        return b_phi_overlap
+            # loop over all combination of matrices
+            for ii in range(len(self.matrix_circuits)):
+                for jj in range(ii, len(self.matrix_circuits)):
+
+                
+                    if ii == jj:
+                        # add |c_i|^2 <0|V* Ai* U|0> * <0|U* Ai V|0>
+                        xii = cii_coeffs[iiterm] * bphi_terms[kterm]
+                        b_phi += xii
+                        iiterm += 1
+
+                    else:
+                        # add c_i* c_j <0|V* Ai* U|0> * <0|U* Aj V|0>
+                        xij = cij_coeffs[ijterm] * bphi_terms[kterm]
+                        b_phi += xij 
+                        # add c_i c_j* <0|V* Aj* U|0> * <0|U* Ai V|0>
+                        b_phi += xij
+                        ijterm += 1
+
+                    kterm += 1
+    
+        else:
+
+            if self._use_overlap_test:
+
+                # compute <0|V* Ai* U|0><0|U* Aj* V> = p[k] + 1.0j p[k+1]
+                # with k = 2*(self.num_hdmr + f(ij))
+                bphi_terms = np.array(probabiliy_circuit_output)[2 * self.num_hdmr :]
+                if bphi_terms.dtype != "complex128":
+                    bphi_terms = bphi_terms.astype("complex128")
+                bphi_terms *= np.array([1.0, 1.0j] * int(len(bphi_terms) / 2))
+                bphi_terms = bphi_terms.reshape(-1, 2).sum(1)      
+
+                # init the final result
+                b_phi = 0.0 + 0.0j
+                nterm = len(bphi_terms)
+                kterm, iiterm, ijterm = 0, 0, 0
+
+                # loop over all combination of matrices
+                for ii in range(len(self.matrix_circuits)):
+                    for jj in range(ii, len(self.matrix_circuits)):
+
+                    
+                        if ii == jj:
+                            # add |c_i|^2 <0|V* Ai* U|0> * <0|U* Ai V|0>
+                            xii = cii_coeffs[iiterm] * bphi_terms[kterm]
+                            b_phi += xii
+                            iiterm += 1
+
+                        else:
+                            # add c_i* c_j <0|V* Ai* U|0> * <0|U* Aj V|0>
+                            xij = cij_coeffs[ijterm] * bphi_terms[kterm]
+                            b_phi += xij 
+                            # add c_i c_j* <0|V* Aj* U|0> * <0|U* Ai V|0>
+                            b_phi += xij
+                            ijterm += 1
+
+                        kterm += 1
+                        
+            else:
+
+                # compute <0|V* Ai* U|0> = p[k] + 1.0j p[k+1]
+                # with k = 2*(self.num_hdmr + i)
+                bphi_terms = np.array(probabiliy_circuit_output)[2 * self.num_hdmr :]
+                if bphi_terms.dtype != "complex128":
+                    bphi_terms = bphi_terms.astype("complex128")
+                bphi_terms *= np.array([1.0, 1.0j] * int(len(bphi_terms) / 2))
+                bphi_terms = bphi_terms.reshape(-1, 2).sum(1)
+
+                # init the final result
+                b_phi = 0.0 + 0.0j
+                nterm = len(bphi_terms)
+                iterm = 0
+                for i in range(nterm):
+                    # add |c_i|^2 <0|V* Ai* U|0> * <0|U* Ai V|0>
+                    xii = cii_coeffs[i] * bphi_terms[i] * bphi_terms[i].conj()
+                    b_phi += xii
+                    for j in range(i + 1, nterm):
+                        # add c_i* c_j <0|V* Ai* U|0> * <0|U* Aj V|0>
+                        xij = cij_coeffs[iterm] * bphi_terms[i] * bphi_terms[j].conj()
+                        b_phi += xij
+                        # add c_j* c_i <0|V* Aj* U|0> * <0|U* Ai V|0>
+                        b_phi += xij.conj()
+                        iterm += 1
+
+            return b_phi
 
     def get_cost_evaluation_function(
         self,
