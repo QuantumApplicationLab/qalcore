@@ -2,7 +2,7 @@
 
 from typing import Optional, List, Union
 from qiskit import QuantumCircuit, QuantumRegister
-
+import numpy as np 
 
 class HadammardTest:
     r"""Class to compute the Hadamard Test
@@ -288,7 +288,7 @@ class HadammardOverlapTest:
             
             # Sdg on ctrl qbit
             if imaginary:
-                qc.rz(qctrl)
+                qc.rz(-np.pi/2, qctrl)
 
             if use_barrier:
                 qc.barrier()
@@ -429,17 +429,17 @@ class LocalHadammardTest:
             # U* matrix
             qc.compose(
                 U.inverse(),
-                qubits=list(range(0, self.num_qubits)),
+                qubits=list(range(1, self.num_qubits)),
                 inplace=True,
             )
 
             # control z gate on the iq qubit
-            qc.cz(0, index_zgate)
+            qc.cz(0, index_zgate+1)
 
             # U matrix
             qc.compose(
                 U,
-                qubits=list(range(0, self.num_qubits)),
+                qubits=list(range(1, self.num_qubits)),
                 inplace=True,
             )
 

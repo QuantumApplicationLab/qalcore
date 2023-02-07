@@ -162,6 +162,8 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                 by the optimizer for its current set of parameters as it works towards the minimum.
                 These are: the evaluation count, the cost and the optimizer parameters for the ansatz
             quantum_instance: Quantum Instance or Backend
+            use_overlap_test: Use Hadamard overlap test to compute the cost function
+            use_local_cost_function: use the local cost function and not the global one
         """
         super().__init__()
 
@@ -443,7 +445,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
             if self._use_overlap_test:
                 raise ValueError('Hadammard Overlap Tests not supported with local cost function')
             
-            num_z = self.matrix_circuits[0].num_qubits
+            num_z = self.matrix_circuits[0].circuit.num_qubits
 
             # create the circuits for <0| U^* A_l V(Zj . Ij|) V^* Am^* U|0>
             for ii in range(len(self.matrix_circuits)):
@@ -455,7 +457,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                     for iq in range(num_z):
 
                         circuits += LocalHadammardTest(
-                            operators = [self.vector_circuit, mi, mj],
+                            operators = [self.vector_circuit, mi.circuit, mj.circuit],
                             index_zgate = iq,
                             apply_initial_state = self.ansatz,
                             apply_measurement = appply_explicit_measurement 
@@ -474,7 +476,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                         mj = self.matrix_circuits[jj]
 
                         circuits += HadammardOverlapTest(
-                            operators = [self.vector_circuit, mi, mj],
+                            operators = [self.vector_circuit, mi.circuit, mj.circuit],
                             apply_initial_state = self.ansatz,
                             apply_measurement = appply_explicit_measurement 
                         )
@@ -658,7 +660,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                 bphi_terms = bphi_terms.astype("complex128")
             bphi_terms *= np.array([1.0, 1.0j] * int(len(bphi_terms) / 2))
             bphi_terms = bphi_terms.reshape(-1, 2).sum(1) 
-            num_zgate = self.matrix_circuits[0].num_qubits
+            num_zgate = self.matrix_circuits[0].circuit.num_qubits
             bphi_terms = bphi_terms.reshape(-1, num_zgate).sum(1)
 
             # init the final result
@@ -751,7 +753,8 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                         b_phi += xij.conj()
                         iterm += 1
 
-            return b_phi
+
+        return b_phi
 
     def get_cost_evaluation_function(
         self,
