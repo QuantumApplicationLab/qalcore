@@ -11,7 +11,7 @@ class HadammardTest:
         self,
         operators: Union[QuantumCircuit, List[QuantumCircuit]],
         use_barrier: Optional[bool] = False,
-        apply_control_to_operator: Optional[bool] = True,
+        apply_control_to_operator: Optional[Union[bool, List[bool]]] = True,
         apply_initial_state: Optional[QuantumCircuit] = None,
         apply_measurement: Optional[bool] = False,
     ) -> List[QuantumCircuit]:
@@ -35,7 +35,10 @@ class HadammardTest:
         if isinstance(operators, QuantumCircuit):
             operators = [operators]
 
-        if apply_control_to_operator:
+        if not isinstance(apply_control_to_operator, list):
+            apply_control_to_operator = [apply_control_to_operator]*len(operators)
+
+        if apply_control_to_operator[0]:
             self.num_qubits = operators[0].num_qubits + 1
             if apply_initial_state is not None:
                 if apply_initial_state.num_qubits != operators[0].num_qubits:
@@ -134,8 +137,8 @@ class HadammardTest:
                 qc.barrier()
 
             # matrix circuit
-            for op in operators:
-                if apply_control_to_operator:
+            for op, ctrl in zip(operators, apply_control_to_operator):
+                if ctrl:
                     qc.compose(
                         op.control(1),
                         qubits=list(range(0, self.num_qubits)),
