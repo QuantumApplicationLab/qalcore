@@ -212,6 +212,9 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         self._use_local_cost_function = None
         self.use_local_cost_function = use_local_cost_function
 
+        if use_local_cost_function and use_overlap_test:
+            raise ValueError("Hadammard Overlap Tests not supported with local cost function")
+
     @property
     def num_qubits(self) -> int:
         """return the numner of qubits"""
@@ -442,9 +445,6 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         # local cost function
         if self._use_local_cost_function:
 
-            if self._use_overlap_test:
-                raise ValueError('Hadammard Overlap Tests not supported with local cost function')
-            
             num_z = self.matrix_circuits[0].circuit.num_qubits
 
             # create the circuits for <0| U^* A_l V(Zj . Ij|) V^* Am^* U|0>
@@ -456,9 +456,11 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
                     for iq in range(num_z):
 
+                        # circuit for the CZ operation on the iqth qubit
                         qc_z = QuantumCircuit(num_z+1)
                         qc_z.cz(0, iq+1)
 
+                        # create Hadammard circuit
                         circuits += HadammardTest(
                             operators = [mi.circuit.inverse(),
                                         self.vector_circuit,
@@ -586,29 +588,33 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
             float: value of the cost function
         """
 
-        # compute all the ci.conj * cj  for i<j
+        # ci.conj * cj  for i<=j
         cii_coeffs, cij_coeffs = coeffs
 
         # compute all the terms in <\phi|\phi> = \sum c_i* cj <0|V Ai* Aj V|0>
-        phi_phi = self._compute_normalization_term(
+        norm = self._compute_normalization_term(
             cii_coeffs, cij_coeffs, probabiliy_circuit_output
         )
 
         if self._use_local_cost_function:
-            b_phi = self._compute_local_terms(
+            # compute all terms in \sum c_i* c_j 1/n \sum_n <0|V* Ai U Zn U* Aj* V|0>
+            sum_terms = self._compute_local_terms(
                 cii_coeffs, cij_coeffs, probabiliy_circuit_output
             )
-            b_phi += phi_phi
-            b_phi /= 2
+            # add \sum c_i* cj <0|V Ai* Aj V|0>
+            sum_terms += norm
+
+            # factor two coming from |0><0| = 1/2(I+Z)
+            sum_terms /= 2
 
         else:
             # compute all the terms in |<b|\phi>|^2 = \sum c_i* cj <0|U* Ai V|0><0|V* Aj* U|0>
-            b_phi = self._compute_global_terms(
+            sum_terms = self._compute_global_terms(
                 cii_coeffs, cij_coeffs, probabiliy_circuit_output
             )
 
         # overall cost
-        cost = 1.0 - np.real(b_phi / phi_phi)
+        cost = 1.0 - np.real(sum_terms / norm)
 
         print("Cost function %f" % cost)
         return cost
@@ -633,22 +639,22 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         """
 
         # compute all the terms in <\phi|\phi> = \sum c_i* cj <0|V Ai* Aj V|0>
-        phi_phi= np.array(probabiliy_circuit_output)[: 2 * self.num_hdmr]
-        if phi_phi.dtype != "complex128":
-            phi_phi = phi_phi.astype("complex128")
-        phi_phi *= np.array([1.0, 1.0j] * self.num_hdmr)
-        phi_phi = phi_phi.reshape(-1, 2).sum(1)
+        norm = np.array(probabiliy_circuit_output)[: 2 * self.num_hdmr]
+        if norm.dtype != "complex128":
+            norm = norm.astype("complex128")
+        norm *= np.array([1.0, 1.0j] * self.num_hdmr)
+        norm = norm.reshape(-1, 2).sum(1)
 
-        phi_phi *= cij_coeff
-        phi_phi = phi_phi.sum()
-        phi_phi += phi_phi.conj()
+        norm *= cij_coeff
+        norm = norm.sum()
+        norm += norm.conj()
 
         # add the diagonal terms
         # since <0|V Ai* Aj V|0> = 1 we simply
         # add the sum of the cici coeffs
-        phi_phi += cii_coeff.sum()
+        norm += cii_coeff.sum()
 
-        return phi_phi
+        return norm
 
     def _compute_global_terms(
         self,
@@ -674,34 +680,33 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
             # compute <0|V* Ai* U|0><0|U* Aj* V> = p[k] + 1.0j p[k+1]
             # with k = 2*(self.num_hdmr + f(ij))
-            bphi_terms = np.array(probabiliy_circuit_output)[2 * self.num_hdmr :]
-            if bphi_terms.dtype != "complex128":
-                bphi_terms = bphi_terms.astype("complex128")
-            bphi_terms *= np.array([1.0, 1.0j] * int(len(bphi_terms) / 2))
-            bphi_terms = bphi_terms.reshape(-1, 2).sum(1)      
+            proba = np.array(probabiliy_circuit_output)[2 * self.num_hdmr :]
+            if proba.dtype != "complex128":
+                proba = proba.astype("complex128")
+            proba *= np.array([1.0, 1.0j] * int(len(proba) / 2))
+            proba = proba.reshape(-1, 2).sum(1)      
 
             # init the final result
-            b_phi = 0.0 + 0.0j
-            nterm = len(bphi_terms)
+            out = 0.0 + 0.0j
+            nterm = len(proba)
             kterm, iiterm, ijterm = 0, 0, 0
 
             # loop over all combination of matrices
             for ii in range(len(self.matrix_circuits)):
                 for jj in range(ii, len(self.matrix_circuits)):
-
                 
                     if ii == jj:
                         # add |c_i|^2 <0|V* Ai* U|0> * <0|U* Ai V|0>
-                        xii = cii_coeffs[iiterm] * bphi_terms[kterm]
-                        b_phi += xii
+                        xii = cii_coeffs[iiterm] * proba[kterm]
+                        out += xii
                         iiterm += 1
 
                     else:
                         # add c_i* c_j <0|V* Ai* U|0> * <0|U* Aj V|0>
-                        xij = cij_coeffs[ijterm] * bphi_terms[kterm]
-                        b_phi += xij 
+                        xij = cij_coeffs[ijterm] * proba[kterm]
+                        out += xij 
                         # add c_i c_j* <0|V* Aj* U|0> * <0|U* Ai V|0>
-                        b_phi += xij.conj()
+                        out += xij.conj()
                         ijterm += 1
 
                     kterm += 1
@@ -710,29 +715,30 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
             # compute <0|V* Ai* U|0> = p[k] + 1.0j p[k+1]
             # with k = 2*(self.num_hdmr + i)
-            bphi_terms = np.array(probabiliy_circuit_output)[2 * self.num_hdmr :]
-            if bphi_terms.dtype != "complex128":
-                bphi_terms = bphi_terms.astype("complex128")
-            bphi_terms *= np.array([1.0, 1.0j] * int(len(bphi_terms) / 2))
-            bphi_terms = bphi_terms.reshape(-1, 2).sum(1)
+            proba = np.array(probabiliy_circuit_output)[2 * self.num_hdmr :]
+            if proba.dtype != "complex128":
+                proba = proba.astype("complex128")
+            proba *= np.array([1.0, 1.0j] * int(len(proba) / 2))
+            proba = proba.reshape(-1, 2).sum(1)
 
             # init the final result
-            b_phi = 0.0 + 0.0j
-            nterm = len(bphi_terms)
+            out = 0.0 + 0.0j
+            nterm = len(proba)
             iterm = 0
+
             for i in range(nterm):
                 # add |c_i|^2 <0|V* Ai* U|0> * <0|U* Ai V|0>
-                xii = cii_coeffs[i] * bphi_terms[i] * bphi_terms[i].conj()
-                b_phi += xii
+                xii = cii_coeffs[i] * proba[i] * proba[i].conj()
+                out += xii
                 for j in range(i + 1, nterm):
                     # add c_i* c_j <0|V* Ai* U|0> * <0|U* Aj V|0>
-                    xij = cij_coeffs[iterm] * bphi_terms[i] * bphi_terms[j].conj()
-                    b_phi += xij
+                    xij = cij_coeffs[iterm] * proba[i] * proba[j].conj()
+                    out += xij
                     # add c_j* c_i <0|V* Aj* U|0> * <0|U* Ai V|0>
-                    b_phi += xij.conj()
+                    out += xij.conj()
                     iterm += 1
 
-        return b_phi
+        return out
 
     def _compute_local_terms(
         self,
@@ -740,10 +746,10 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         cij_coeffs: np.ndarray,
         probabiliy_circuit_output: List,
     ) -> float:
-        """Compute |<b|phi>|^2
+        """Compute the term of the local cost function given by
 
         .. math::
-            |\\langle b|\\Phi\\rangle|^2 = \\sum_{nm} c_n^*c_m \\langle 0|V^* U_n^* U_b |0 \\rangle \\langle 0|U_b^* U_m V |0\\rangle
+            \\sum c_i^* c_j \\frac{1}{n} \\sum_n \\langle 0|V^* A_i U Z_n U^* A_j^* V|0\\rangle
 
         Args:
             cii_coeffs (List): the values of the c_i^* c_i coeffcients
@@ -754,18 +760,20 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
             float: value of the sum
         """
 
-        # compute <0|V* Ai* U|Zj><Zj|U* Aj* V> = p[k] + 1.0j p[k+1]
-        # with k = 2*(self.num_hdmr + f(ij))
-        bphi_terms = np.array(probabiliy_circuit_output)[2 * self.num_hdmr :]
-        if bphi_terms.dtype != "complex128":
-            bphi_terms = bphi_terms.astype("complex128")
-        bphi_terms *= np.array([1.0, 1.0j] * int(len(bphi_terms) / 2))
-        bphi_terms = bphi_terms.reshape(-1, 2).sum(1) 
+        # rearrange the circuit output to add the real and imaginary part of the hadamard test : p[k] + 1.0j p[k+1]
+        proba = np.array(probabiliy_circuit_output)[2 * self.num_hdmr :]
+        if proba.dtype != "complex128":
+            proba = proba.astype("complex128")
+        proba *= np.array([1.0, 1.0j] * int(len(proba) / 2))
+        proba = proba.reshape(-1, 2).sum(1) 
+
+        # add all the hadamard test values corresponding to the insertion of Z gates on the same cicuit
+        # b_ij = \sum_n \\frac{1}{n} \\sum_n \\langle 0|V^* A_i U Z_n U^* A_j^* V|0\\rangle
         num_zgate = self.matrix_circuits[0].circuit.num_qubits
-        bphi_terms = bphi_terms.reshape(-1, num_zgate).mean(1)
+        proba = proba.reshape(-1, num_zgate).mean(1)
 
         # init the final result
-        b_phi = 0.0 + 0.0j
+        out = 0.0 + 0.0j
         kterm, iiterm, ijterm = 0, 0, 0
 
         # loop over all combination of matrices
@@ -774,22 +782,22 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
             
                 if ii == jj:
-                    # add |c_i|^2 <0|V* Ai* U|0> * <0|U* Ai V|0>
-                    xii = cii_coeffs[iiterm] * bphi_terms[kterm]
-                    b_phi += xii
+                    # add |c_i|^2 b_ii
+                    xii = cii_coeffs[iiterm] * proba[kterm]
+                    out += xii
                     iiterm += 1
 
                 else:
-                    # add c_i* c_j <0|V* Ai* U|0> * <0|U* Aj V|0>
-                    xij = cij_coeffs[ijterm] * bphi_terms[kterm]
-                    b_phi += xij 
-                    # add c_i c_j* <0|V* Aj* U|0> * <0|U* Ai V|0>
-                    b_phi += xij.conj()
+                    # add c_i* c_j b_ij
+                    xij = cij_coeffs[ijterm] * proba[kterm]
+                    out += xij 
+                    # add c_i c_j* b_ij^*
+                    out += xij.conj()
                     ijterm += 1
 
                 kterm += 1
 
-        return b_phi
+        return out
 
     def get_cost_evaluation_function(
         self,
