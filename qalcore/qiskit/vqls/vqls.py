@@ -50,6 +50,8 @@ from qiskit.opflow import (
     ExpectationFactory,
 )
 
+from qiskit.opflow.state_fns.sparse_vector_state_fn import SparseVectorStateFn
+
 from qiskit.algorithms.optimizers import SLSQP, Minimizer, Optimizer
 from qiskit.opflow.gradients import GradientBase
 
@@ -474,6 +476,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
         # global cost function 
         else:
+
             # create the circuits for <0|U^* A_l V|0\rangle\langle 0| V^* Am^* U|0>
             # either using overal test or hadammard test
             if self._use_overlap_test:
@@ -490,6 +493,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                             apply_measurement = appply_explicit_measurement 
                         )
             else:
+                
                 for mi in self.matrix_circuits:
                     circuits += HadammardTest(
                         operators=[self.ansatz, mi.circuit, self.vector_circuit.inverse()],
@@ -498,17 +502,25 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
         return circuits
 
-    def construct_observalbe(self):
-        """Create the operator to measure the circuit output."""
+    def construct_observalbe(self, num_circuits: int):
+        """Create the operators needed to measure the circuit output."""
 
-        # create thew obsevable
+        # Create the operator to measure |1> on the control qubit.
         one_op = (I - Z) / 2
-        self.observable = TensoredOp((self.num_qubits - 1) * [I]) ^ one_op
+        one_op_ctrl = TensoredOp((self.num_qubits - 1) * [I]) ^ one_op
+
+        if self._use_overlap_test:
+            obs = [one_op_ctrl]*self.num_hdmr + [None] * (num_circuits-self.num_hdmr)
+        else:
+            obs = [one_op_ctrl]*num_circuits
+
+        return obs
 
     def construct_expectation(
         self,
         parameter: Union[List[float], List[Parameter], np.ndarray],
         circuit: QuantumCircuit,
+        observable: Union[TensoredOp, None],
     ) -> Union[OperatorBase, Tuple[OperatorBase, ExpectationBase]]:
         r"""
         Generate the ansatz circuit and expectation value measurement, and return their
@@ -527,22 +539,13 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         # assign param to circuit
         wave_function = circuit.assign_parameters(parameter)
 
-        # compose the statefn of the observable on the circuit
-        return ~StateFn(self.observable) @ StateFn(wave_function)
+        if observable is not None:
+            # compose the statefn of the observable on the circuit
+            return ~StateFn(self.observable) @ StateFn(wave_function)
+        else:
+            return StateFn(wave_function)
 
-    @staticmethod
-    def get_probability_from_statevector(statevector: List[complex]) -> float:
-        r"""Transforms the circuit statevector in a probabilty
 
-        Args:
-            statevector (List[complex]): circuit state vector
-
-        Returns:
-            float: probability
-        """
-        sv = statevector[1::2]
-        exp_val = np.real((sv * sv.conj()).sum())
-        return 1.0 - 2.0 * exp_val
 
     @staticmethod
     def get_probability_from_expected_value(exp_val: complex) -> float:
@@ -554,6 +557,13 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         Returns:
             float : probability
         """
+
+
+        if isinstance(exp_val, SparseVectorStateFn):
+            exp_val = exp_val.to_matrix()
+            exp_val *= [1,1,1,-1]*2**()
+            exp_val = exp_val.sum()
+
         return 1.0 - 2.0 * exp_val
 
     def get_hadamard_sum_coeffcients(self) -> Tuple:
@@ -802,6 +812,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
     def get_cost_evaluation_function(
         self,
         circuits: List[QuantumCircuit],
+        observables: List[Union[TensoredOp, None]],
         coeffs: Tuple,
     ) -> Callable[[np.ndarray], Union[float, List[float]]]:
         """Generate the cost function of the minimazation process
@@ -822,13 +833,11 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                 "The ansatz must be parameterized, but has 0 free parameters."
             )
 
-        # construct the observable op
-        self.construct_observalbe()
-
+    
         ansatz_params = self.ansatz.parameters
         expect_ops = []
-        for circ in circuits:
-            expect_ops.append(self.construct_expectation(ansatz_params, circ))
+        for circ, obs in zip(circuits, observables):
+            expect_ops.append(self.construct_expectation(ansatz_params, circ, obs))
 
         # create a ListOp for performance purposes
         expect_ops = ListOp(expect_ops)
@@ -990,6 +999,9 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         # compute the circuits
         circuits = self.construct_circuit(matrix, vector)
 
+        # compute the observables needed for measuring the circiuts
+        observables = self.construct_observalbe(len(circuits))
+
         # compute all the ci.conj * cj  for i<j
         coeffs = self.get_hadamard_sum_coeffcients()
 
@@ -1004,7 +1016,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         self._eval_count = 0
 
         # get the cost evaluation function
-        cost_evaluation = self.get_cost_evaluation_function(circuits, coeffs)
+        cost_evaluation = self.get_cost_evaluation_function(circuits, observables, coeffs)
 
         if callable(self.optimizer):
             opt_result = self.optimizer(  # pylint: disable=not-callable
