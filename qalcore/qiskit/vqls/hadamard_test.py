@@ -297,10 +297,12 @@ class HadammardOverlapTest:
                 qc.barrier()
 
             # apply Al on the first qreg
-            qc.compose(Al.control(1), [qctrl,qreg0], inplace=True)
+            idx = [0] + list(range(1,Al.num_qubits+1))
+            qc.compose(Al.control(1), idx, inplace=True)
 
             # apply Am^\dagger on the second reg
-            qc.compose(Am.inverse().control(1), [qctrl,qreg1], inplace=True)
+            idx = [0] + list(range(Al.num_qubits+1,2*Al.num_qubits+1))
+            qc.compose(Am.inverse().control(1), idx, inplace=True)
 
             if use_barrier:
                 qc.barrier()
