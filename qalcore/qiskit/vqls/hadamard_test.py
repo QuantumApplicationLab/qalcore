@@ -335,10 +335,14 @@ class HadammardOverlapTest:
         """Compute [1,1,1,-1] \otimes n
         """
 
-        c0 = np.array([1,1,1,-1])
-        coeffs = np.array([1,1,1,-1])
-        for i in range(1,self.operator_num_qubits):
-            coeffs = np.tensordot(coeffs, c0, axes=0).flatten()
+        # c0 = np.array([1,1,1,-1])
+        # coeffs = np.array([1,1,1,-1])
+        # for _ in range(1,self.operator_num_qubits):
+        #     coeffs = np.tensordot(coeffs, c0, axes=0).flatten()
+
+        coeffs = np.array([1,1,1,-1]*(2*2**(self.operator_num_qubits-1)))
+
+        print(coeffs)
         return coeffs 
 
     def construct_expectation(self, parameter: Union[List[float], List[Parameter], np.ndarray, None] = None):

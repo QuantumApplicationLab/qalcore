@@ -541,13 +541,8 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
             # compute all terms in 
             # \sum c_i* c_j 1/n \sum_n <0|V* Ai U Zn U* Aj* V|0>
             sum_terms = self._compute_local_terms(
-                coefficient_matrix, hdmr_values_overlap
+                coefficient_matrix, hdmr_values_overlap, norm
             )
-            # add \sum c_i* cj <0|V Ai* Aj V|0>
-            sum_terms += norm
-
-            # factor two coming from |0><0| = 1/2(I+Z)
-            sum_terms /= 2
 
         else:
             # compute all the terms in 
@@ -625,10 +620,13 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
             hdmr_matrix[np.triu_indices(size)] = hdmr_values
 
             # multiply by the coefficent matrix and sum the values
-            out = (coeff_matrix * hdmr_matrix).sum()
+            out_matrix = coeff_matrix * hdmr_matrix
+            out = out_matrix.sum()
 
             # add the conj that correspond to the tri low part of the matrix
-            out += out.conj()       
+            # warning the diagonal is also contained in out and we only
+            # want to add the conj of the tri up excluding the diag
+            out += (out_matrix[np.triu_indices_from(out_matrix, k=1)].conj()).sum()    
                     
         else:
             # hdmr_values here contains the values of <0|V* Ai* U|0>
@@ -642,6 +640,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         self,
         coeff_matrix: np.ndarray,
         hdmr_values: np.ndarray,
+        norm: float
     ) -> float:
         """Compute the term of the local cost function given by
 
@@ -676,6 +675,12 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         # warning the diagonal is also contained in out and we only
         # want to add the conj of the tri up excluding the diag
         out += (out_matrix[np.triu_indices_from(out_matrix, k=1)].conj()).sum()
+
+        # add \sum c_i* cj <0|V Ai* Aj V|0>
+        out += norm
+
+        # factor two coming from |0><0| = 1/2(I+Z)
+        out /= 2
 
         return out
 
