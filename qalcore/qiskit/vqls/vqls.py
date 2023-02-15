@@ -655,7 +655,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         Returns:
             float: value of the sum
         """
-        print(hdmr_values)
+        
         # add all the hadamard test values corresponding to the insertion of Z gates on the same cicuit
         # b_ij = \sum_n \\frac{1}{n} \\sum_n \\langle 0|V^* A_i U Z_n U^* A_j^* V|0\\rangle
         num_zgate = self.matrix_circuits[0].circuit.num_qubits
@@ -666,14 +666,16 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         size = len(self.matrix_circuits)
         hdmr_matrix = np.zeros((size,size))
         hdmr_matrix[np.triu_indices(size)] = hdmr_values
-        print(hdmr_matrix)
+        
         
         # multiply by the coefficent matrix and sum the values
-        
-        out = (coeff_matrix * hdmr_matrix).sum()
+        out_matrix = coeff_matrix * hdmr_matrix
+        out = (out_matrix).sum()
 
         # add the conj that correspond to the tri low part of the matrix
-        out += out.conj()
+        # warning the diagonal is also contained in out and we only
+        # want to add the conj of the tri up excluding the diag
+        out += (out_matrix[np.triu_indices_from(out_matrix, k=1)].conj()).sum()
 
         return out
 
