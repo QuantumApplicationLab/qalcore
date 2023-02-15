@@ -2,6 +2,8 @@
 
 from typing import Optional, List, Union
 from qiskit import QuantumCircuit, QuantumRegister
+from qiskit.opflow import Z, I, TensoredOp, StateFn, ListOp
+from qiskit.circuit import Parameter
 import numpy as np 
 
 class HadammardTest:
@@ -14,7 +16,7 @@ class HadammardTest:
         apply_control_to_operator: Optional[Union[bool, List[bool]]] = True,
         apply_initial_state: Optional[QuantumCircuit] = None,
         apply_measurement: Optional[bool] = False,
-    ) -> List[QuantumCircuit]:
+    ) :
         r"""Create the quantum circuits required to compute the hadamard test:
 
         .. math::
@@ -28,8 +30,6 @@ class HadammardTest:
             apply_initial_state (Optional[QuantumCircuit], optional): Quantum Circuit to create |Psi> from |0>. If None, assume that the qubits are alredy in Psi.
             apply_measurement (Optional[bool], optional): apply explicit measurement. Defaults to False.
 
-        Returns:
-            List[QuantumCircuit]: List of quamtum circuits required to compute the Hadammard Test.
         """
 
         if isinstance(operators, QuantumCircuit):
@@ -68,25 +68,11 @@ class HadammardTest:
         # number of circuits required
         self.ncircuits = len(self.circuits)
 
-        # var for iterator
-        self.iiter = None
+        # compute the observables
+        self.observable = self._build_observable()
 
-    def __iter__(self):
-        self.iiter = 0
-        return self
-
-    def __next__(self):
-        if self.iiter < self.ncircuits:
-            out = self.circuits[self.iiter]
-            self.iiter += 1
-            return out
-        raise StopIteration
-
-    def __len__(self):
-        return len(self.circuits)
-
-    def __getitem__(self, index):
-        return self.circuits[index]
+        # init the expectation
+        self.expect_ops = None
 
     def _build_circuit(
         self,
@@ -160,6 +146,56 @@ class HadammardTest:
 
         return circuits
 
+    def _build_observable(self) -> List[TensoredOp]:
+        """Create the operator to measure |1> on the control qubit.
+
+        Returns:
+            Lis[TensoredOp]: List of two observables to measure |1> on the control qubit I^...^I^|1><1|
+        """
+
+        one_op = (I - Z) / 2
+        one_op_ctrl = TensoredOp((self.num_qubits - 1) * [I]) ^ one_op
+        return one_op_ctrl
+
+    def construct_expectation(self, parameter: Union[List[float], List[Parameter], np.ndarray, None] = None):
+        r"""
+        Generate the ansatz circuit and expectation value measurement, and return their
+        runnable composition.
+
+        Args:
+            parameter: Parameters for the ansatz circuit.
+        
+        Returns:
+            The Operator equalling the measurement of the circuit :class:`StateFn` by the
+            observable's expectation :class:`StateFn`
+        """
+
+        exp_val = []
+
+        for circ in self.circuits:
+            if parameter is not None:
+                exp_val.append(~StateFn(self.observable) @ StateFn(circ.assign_parameters(parameter)))
+            else:
+                exp_val.append(~StateFn(self.observable) @ StateFn(circ))
+
+        self.expect_ops = ListOp(exp_val)
+
+    def get_value(self, circuit_sampler, param_binding: dict) -> List:
+
+        def post_processing(exp_val) -> float:
+            return 1.0 - 2.0 * exp_val[0]
+
+        out = []
+        for op in self.expect_ops:
+            sampled_val = circuit_sampler.convert(op, params=param_binding).eval()
+            out.append(post_processing(sampled_val))
+
+        out = np.array(out).astype('complex128')
+        out *= np.array([1.0, 1.0j])
+
+        return out.sum()
+
+
 
 class HadammardOverlapTest:
     r"""Class to compute the Hadamard Test
@@ -170,7 +206,7 @@ class HadammardOverlapTest:
         use_barrier: Optional[bool] = False,
         apply_initial_state: Optional[QuantumCircuit] = None,
         apply_measurement: Optional[bool] = False,
-    ) -> List[QuantumCircuit]:
+    ) :
         r"""Create the quantum circuits required to compute the hadamard test:
 
         .. math::
@@ -187,8 +223,7 @@ class HadammardOverlapTest:
             List[QuantumCircuit]: List of quamtum circuits required to compute the Hadammard Test.
         """
 
-
-
+        self.operator_num_qubits = operators[0].num_qubits 
         self.num_qubits = 2*operators[0].num_qubits + 1
         if apply_initial_state is not None:
             if apply_initial_state.num_qubits != operators[0].num_qubits:
@@ -211,25 +246,11 @@ class HadammardOverlapTest:
         # number of circuits required
         self.ncircuits = len(self.circuits)
 
+        # post processing coefficients
+        self.post_process_coeffs = self.compute_post_processing_coefficients()
+
         # var for iterator
         self.iiter = None
-
-    def __iter__(self):
-        self.iiter = 0
-        return self
-
-    def __next__(self):
-        if self.iiter < self.ncircuits:
-            out = self.circuits[self.iiter]
-            self.iiter += 1
-            return out
-        raise StopIteration
-
-    def __len__(self):
-        return len(self.circuits)
-
-    def __getitem__(self, index):
-        return self.circuits[index]
 
     def _build_circuit(
         self,
@@ -307,3 +328,55 @@ class HadammardOverlapTest:
             circuits.append(qc)
 
         return circuits
+
+    def compute_post_processing_coefficients(self):
+        """Compute [1,1,1,-1] \otimes n
+        """
+
+        c0 = np.array([1,1,1,-1])
+        coeffs = np.array([1,1,1,-1])
+        for i in range(1,self.operator_num_qubits):
+            coeffs = np.tensordot(coeffs, c0, axes=0).flatten()
+        return coeffs 
+
+    def construct_expectation(self, parameter: Union[List[float], List[Parameter], np.ndarray, None] = None):
+        r"""
+        Generate the ansatz circuit and expectation value measurement, and return their
+        runnable composition.
+
+        Args:
+            parameter: Parameters for the ansatz circuit.
+        
+        Returns:
+            The Operator equalling the measurement of the circuit :class:`StateFn` by the
+            observable's expectation :class:`StateFn`
+        """
+
+        exp_val = []
+
+        for circ in self.circuits:
+            if parameter is not None:
+                exp_val.append(StateFn(circ.assign_parameters(parameter)))
+            else:
+                exp_val.append( StateFn(circ))
+
+        self.expect_ops = ListOp(exp_val)
+
+    def get_value(self, circuit_sampler, param_binding: dict) -> List:
+
+        def post_processing(exp_val) -> float:
+            exp_val = (exp_val.to_matrix()[0])**2
+            p0 = (exp_val[0::2] * self.post_process_coeffs).sum()
+            p1 = (exp_val[1::2] * self.post_process_coeffs).sum()
+
+            return p0 - p1
+
+        out = []
+        for op in self.expect_ops:
+            sampled_val = circuit_sampler.convert(op, params=param_binding).eval()
+            out.append(post_processing(sampled_val))
+
+        out = np.array(out).astype('complex128')
+        out *= np.array([1.0, 1.0j])
+
+        return out.sum()

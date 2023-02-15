@@ -12,7 +12,7 @@ See https://arxiv.org/abs/1909.05820
 
 from typing import Optional, Union, List, Callable, Tuple
 import numpy as np
-
+import itertools
 
 from qiskit.circuit.library.n_local.real_amplitudes import RealAmplitudes
 from qiskit import Aer
@@ -426,24 +426,26 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         else:
             raise ValueError("Format of the input matrix not recognized")
 
-        circuits = []
-        self.num_hdmr = 0
 
-        # create only the circuit for <0|V A_n ^* A_m V|0>
+
+        # create only the circuit for <psi|psi> =  <0|V A_n ^* A_m V|0>
         # with n != m as the diagonal terms (n==m) always give a proba of 1.0
+        hdmr_tests_norm = []
         for ii in range(len(self.matrix_circuits)):
             mi = self.matrix_circuits[ii]
 
             for jj in range(ii + 1, len(self.matrix_circuits)):
                 mj = self.matrix_circuits[jj]
-                circuits += HadammardTest(
+                hdmr_tests_norm.append( HadammardTest(
                     operators=[mi.circuit.inverse(), mj.circuit],
                     apply_initial_state=self._ansatz,
                     apply_measurement=appply_explicit_measurement,
+                    )
                 )
 
-                self.num_hdmr += 1
 
+        # create the circuits for <b|psi> 
+        hdmr_tests_overlap = []
         # local cost function
         if self._use_local_cost_function:
 
@@ -463,7 +465,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                         qc_z.cz(0, iq+1)
 
                         # create Hadammard circuit
-                        circuits += HadammardTest(
+                        hdmr_tests_overlap.append(HadammardTest(
                             operators = [mi.circuit.inverse(),
                                         self.vector_circuit,
                                         qc_z,
@@ -472,6 +474,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                             apply_control_to_operator=[True, True, False, True, True],
                             apply_initial_state = self.ansatz,
                             apply_measurement = appply_explicit_measurement 
+                            )
                         )
 
         # global cost function 
@@ -487,107 +490,40 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                     for jj in range(ii, len(self.matrix_circuits)):
                         mj = self.matrix_circuits[jj]
 
-                        circuits += HadammardOverlapTest(
+                        hdmr_tests_overlap.append(HadammardOverlapTest(
                             operators = [self.vector_circuit, mi.circuit, mj.circuit],
                             apply_initial_state = self.ansatz,
                             apply_measurement = appply_explicit_measurement 
+                            )
                         )
             else:
                 
                 for mi in self.matrix_circuits:
-                    circuits += HadammardTest(
+                    hdmr_tests_overlap.append(HadammardTest(
                         operators=[self.ansatz, mi.circuit, self.vector_circuit.inverse()],
                         apply_measurement=appply_explicit_measurement,
+                        )
                     )
 
-        return circuits
-
-    def construct_observalbe(self, num_circuits: int):
-        """Create the operators needed to measure the circuit output."""
-
-        # Create the operator to measure |1> on the control qubit.
-        one_op = (I - Z) / 2
-        one_op_ctrl = TensoredOp((self.num_qubits - 1) * [I]) ^ one_op
-
-        if self._use_overlap_test:
-            obs = [one_op_ctrl]*self.num_hdmr + [None] * (num_circuits-self.num_hdmr)
-        else:
-            obs = [one_op_ctrl]*num_circuits
-
-        return obs
-
-    def construct_expectation(
-        self,
-        parameter: Union[List[float], List[Parameter], np.ndarray],
-        circuit: QuantumCircuit,
-        observable: Union[TensoredOp, None],
-    ) -> Union[OperatorBase, Tuple[OperatorBase, ExpectationBase]]:
-        r"""
-        Generate the ansatz circuit and expectation value measurement, and return their
-        runnable composition.
-
-        Args:
-            parameter: Parameters for the ansatz circuit.
-            circuit: one of the circuit required for the cost calculation
-
-        Returns:
-            The Operator equalling the measurement of the circuit :class:`StateFn` by the
-            observable's expectation :class:`StateFn`
-
-        """
-
-        # assign param to circuit
-        wave_function = circuit.assign_parameters(parameter)
-
-        if observable is not None:
-            # compose the statefn of the observable on the circuit
-            return ~StateFn(self.observable) @ StateFn(wave_function)
-        else:
-            return StateFn(wave_function)
-
+        return hdmr_tests_norm, hdmr_tests_overlap
 
 
     @staticmethod
-    def get_probability_from_expected_value(exp_val: complex) -> float:
-        r"""Transforms the state array of the circuit into a probability
+    def get_coefficient_matrix(coeffs):
+        """Compute all the vi* vj terms
 
         Args:
-            exp_val (complex): expected value of the observable
-
-        Returns:
-            float : probability
+            coeffs (list): list of complex coefficients
         """
+        output = np.array(list(itertools.combinations(coeffs,2))) 
+        output[:,0] = output[:,0].conj()
+        return output.prod(1)
 
-
-        if isinstance(exp_val, SparseVectorStateFn):
-            exp_val = exp_val.to_matrix()
-            exp_val *= [1,1,1,-1]*2**()
-            exp_val = exp_val.sum()
-
-        return 1.0 - 2.0 * exp_val
-
-    def get_hadamard_sum_coeffcients(self) -> Tuple:
-        """Compute the c_i^*c_i and  c_i^*c_j coefficients.
-
-        Returns:
-            tuple: c_ii coefficients and c_ij coefficients
-        """
-
-        # compute all the ci.conj * cj  for i<j
-        cii_coeffs, cij_coeffs = [], []
-        for ii in range(len(self.matrix_circuits)):
-            ci = self.matrix_circuits[ii].coeff
-            cii_coeffs.append(ci.conj() * ci)
-            for jj in range(ii + 1, len(self.matrix_circuits)):
-                cj = self.matrix_circuits[jj].coeff
-                cij_coeffs.append(ci.conj() * cj)
-
-        return np.array(cii_coeffs), np.array(cij_coeffs)
-
-    def process_probability_circuit_output(
+    def _assemble_cost_function(
         self, 
-        probabiliy_circuit_output: List,
-        coeffs: Tuple
+        hdmr_values_norm: List,
+        hdmr_values_overlap: List,
+        coefficient_matrix: np.array
     ) -> float:
         r"""Compute the final cost function from the output of the different circuits
 
@@ -598,18 +534,16 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
             float: value of the cost function
         """
 
-        # ci.conj * cj  for i<=j
-        cii_coeffs, cij_coeffs = coeffs
-
         # compute all the terms in <\phi|\phi> = \sum c_i* cj <0|V Ai* Aj V|0>
         norm = self._compute_normalization_term(
-            cii_coeffs, cij_coeffs, probabiliy_circuit_output
+            coefficient_matrix, hdmr_values_norm
         )
 
         if self._use_local_cost_function:
-            # compute all terms in \sum c_i* c_j 1/n \sum_n <0|V* Ai U Zn U* Aj* V|0>
+            # compute all terms in 
+            # \sum c_i* c_j 1/n \sum_n <0|V* Ai U Zn U* Aj* V|0>
             sum_terms = self._compute_local_terms(
-                cii_coeffs, cij_coeffs, probabiliy_circuit_output
+                coefficient_matrix, hdmr_values_overlap
             )
             # add \sum c_i* cj <0|V Ai* Aj V|0>
             sum_terms += norm
@@ -618,9 +552,10 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
             sum_terms /= 2
 
         else:
-            # compute all the terms in |<b|\phi>|^2 = \sum c_i* cj <0|U* Ai V|0><0|V* Aj* U|0>
+            # compute all the terms in 
+            # |<b|\phi>|^2 = \sum c_i* cj <0|U* Ai V|0><0|V* Aj* U|0>
             sum_terms = self._compute_global_terms(
-                cii_coeffs, cij_coeffs, probabiliy_circuit_output
+                coefficient_matrix, hdmr_values_overlap
             )
 
         # overall cost
@@ -631,9 +566,8 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
     def _compute_normalization_term(
         self,
-        cii_coeff: np.ndarray,
-        cij_coeff: np.ndarray,
-        probabiliy_circuit_output: List,
+        coeff_matrix: np.ndarray,
+        hdmr_values: List,
     ) -> float:
         r"""Compute <phi|phi>
 
@@ -641,36 +575,35 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
             \\langle\\Phi|\\Phi\\rangle = \\sum_{nm} c_n^*c_m \\langle 0|V^* U_n^* U_m V|0\\rangle
 
         Args:
-            sum_coeff (List): the values of the c_n^* c_m coefficients
-            probabiliy_circuit_output (List): the values of the circuits output
+            coeff_matrix (List): the matrix values of the c_n^* c_m coefficients
+            hdmr_values (List): the values of the circuits output
 
         Returns:
             float: value of the sum
         """
 
         # compute all the terms in <\phi|\phi> = \sum c_i* cj <0|V Ai* Aj V|0>
-        norm = np.array(probabiliy_circuit_output)[: 2 * self.num_hdmr]
-        if norm.dtype != "complex128":
-            norm = norm.astype("complex128")
-        norm *= np.array([1.0, 1.0j] * self.num_hdmr)
-        norm = norm.reshape(-1, 2).sum(1)
+        # hdrm_values here contains the values of the <0|V Ai* Aj V|0>  with j>i
+        out = np.array(hdmr_values)
 
-        norm *= cij_coeff
-        norm = norm.sum()
-        norm += norm.conj()
+        # we multiuply hdmrval by the triup coeff matrix and sum
+        out *= coeff_matrix[np.triu_indices_from(coeff_matrix, k=1)]
+        out = out.sum()
+
+        # add the conj that corresponds to the tri down matrix
+        out += out.conj()
 
         # add the diagonal terms
         # since <0|V Ai* Aj V|0> = 1 we simply
         # add the sum of the cici coeffs
-        norm += cii_coeff.sum()
+        out += np.trace(coeff_matrix)
 
-        return norm
+        return out
 
     def _compute_global_terms(
         self,
-        cii_coeffs: np.ndarray,
-        cij_coeffs: np.ndarray,
-        probabiliy_circuit_output: List,
+        coeff_matrix: np.ndarray,
+        hdmr_values: List,
     ) -> float:
         """Compute |<b|phi>|^2
 
@@ -678,9 +611,8 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
             |\\langle b|\\Phi\\rangle|^2 = \\sum_{nm} c_n^*c_m \\langle 0|V^* U_n^* U_b |0 \\rangle \\langle 0|U_b^* U_m V |0\\rangle
 
         Args:
-            cii_coeffs (List): the values of the c_i^* c_i coeffcients
-            cij_coeffs (List): the values of the c_i^* c_j coeffcients
-            probabiliy_circuit_output (List): values of the circuit outputs
+            coeff_matrix (np.ndarray): the matrix values of the c_n^* c_m coefficients
+            hdmr_values (List): values of the circuit outputs
 
         Returns:
             float: value of the sum
@@ -688,73 +620,30 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
         if self._use_overlap_test:
 
-            # compute <0|V* Ai* U|0><0|U* Aj* V> = p[k] + 1.0j p[k+1]
-            # with k = 2*(self.num_hdmr + f(ij))
-            proba = np.array(probabiliy_circuit_output)[2 * self.num_hdmr :]
-            if proba.dtype != "complex128":
-                proba = proba.astype("complex128")
-            proba *= np.array([1.0, 1.0j] * int(len(proba) / 2))
-            proba = proba.reshape(-1, 2).sum(1)      
+            # hdmr_values here contains the values of <0|V* Ai* U|0><0|V Aj U|0> for j>=i
+            # we first insert these values in a tri up matrix
+            size = len(self.matrix_circuits)
+            hdmr_matrix = np.zeros((size,size))
+            hdmr_matrix[np.triu_indices(size)] = hdmr_values
 
-            # init the final result
-            out = 0.0 + 0.0j
-            nterm = len(proba)
-            kterm, iiterm, ijterm = 0, 0, 0
+            # multiply by the coefficent matrix and sum the values
+            out = (coeff_matrix * hdmr_matrix).sum()
 
-            # loop over all combination of matrices
-            for ii in range(len(self.matrix_circuits)):
-                for jj in range(ii, len(self.matrix_circuits)):
-                
-                    if ii == jj:
-                        # add |c_i|^2 <0|V* Ai* U|0> * <0|U* Ai V|0>
-                        xii = cii_coeffs[iiterm] * proba[kterm]
-                        out += xii
-                        iiterm += 1
-
-                    else:
-                        # add c_i* c_j <0|V* Ai* U|0> * <0|U* Aj V|0>
-                        xij = cij_coeffs[ijterm] * proba[kterm]
-                        out += xij 
-                        # add c_i c_j* <0|V* Aj* U|0> * <0|U* Ai V|0>
-                        out += xij.conj()
-                        ijterm += 1
-
-                    kterm += 1
+            # add the conj that correspond to the tri low part of the matrix
+            out += out.conj()       
                     
         else:
-
-            # compute <0|V* Ai* U|0> = p[k] + 1.0j p[k+1]
-            # with k = 2*(self.num_hdmr + i)
-            proba = np.array(probabiliy_circuit_output)[2 * self.num_hdmr :]
-            if proba.dtype != "complex128":
-                proba = proba.astype("complex128")
-            proba *= np.array([1.0, 1.0j] * int(len(proba) / 2))
-            proba = proba.reshape(-1, 2).sum(1)
-
-            # init the final result
-            out = 0.0 + 0.0j
-            nterm = len(proba)
-            iterm = 0
-
-            for i in range(nterm):
-                # add |c_i|^2 <0|V* Ai* U|0> * <0|U* Ai V|0>
-                xii = cii_coeffs[i] * proba[i] * proba[i].conj()
-                out += xii
-                for j in range(i + 1, nterm):
-                    # add c_i* c_j <0|V* Ai* U|0> * <0|U* Aj V|0>
-                    xij = cij_coeffs[iterm] * proba[i] * proba[j].conj()
-                    out += xij
-                    # add c_j* c_i <0|V* Aj* U|0> * <0|U* Ai V|0>
-                    out += xij.conj()
-                    iterm += 1
+            # hdmr_values here contains the values of <0|V* Ai* U|0>
+            # compute the matrix of the <0|V* Ai* U|0> <0|V Aj U*|0> values
+            hdmr_matrix = self.get_coefficient_matrix(hdmr_values)
+            out = (coeff_matrix * hdmr_matrix).sum()
 
         return out
 
     def _compute_local_terms(
         self,
-        cii_coeffs: np.ndarray,
-        cij_coeffs: np.ndarray,
-        probabiliy_circuit_output: List,
+        coeff_matrix: np.ndarray,
+        hdmr_values: List,
     ) -> float:
         """Compute the term of the local cost function given by
 
@@ -762,58 +651,38 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
             \\sum c_i^* c_j \\frac{1}{n} \\sum_n \\langle 0|V^* A_i U Z_n U^* A_j^* V|0\\rangle
 
         Args:
-            cii_coeffs (List): the values of the c_i^* c_i coeffcients
-            cij_coeffs (List): the values of the c_i^* c_j coeffcients
-            probabiliy_circuit_output (List): values of the circuit outputs
+            coeff_matrix (np.ndarray): the matrix values of the c_n^* c_m coefficients
+            hdmr_values (List): values of the circuit outputs
 
         Returns:
             float: value of the sum
         """
 
-        # rearrange the circuit output to add the real and imaginary part of the hadamard test : p[k] + 1.0j p[k+1]
-        proba = np.array(probabiliy_circuit_output)[2 * self.num_hdmr :]
-        if proba.dtype != "complex128":
-            proba = proba.astype("complex128")
-        proba *= np.array([1.0, 1.0j] * int(len(proba) / 2))
-        proba = proba.reshape(-1, 2).sum(1) 
-
         # add all the hadamard test values corresponding to the insertion of Z gates on the same cicuit
         # b_ij = \sum_n \\frac{1}{n} \\sum_n \\langle 0|V^* A_i U Z_n U^* A_j^* V|0\\rangle
+        hdmr_values = np.array(hdmr_values)
         num_zgate = self.matrix_circuits[0].circuit.num_qubits
-        proba = proba.reshape(-1, num_zgate).mean(1)
+        hdmr_values = hdmr_values.reshape(-1, num_zgate).mean(1)
 
-        # init the final result
-        out = 0.0 + 0.0j
-        kterm, iiterm, ijterm = 0, 0, 0
+        # hdmr_values then contains the values of <0|V* Ai* U|0><0|V Aj U|0> for j>=i
+        # we first insert these values in a tri up matrix
+        size = len(self.matrix_circuits)
+        hdmr_matrix = np.zeros((size,size))
+        hdmr_matrix[np.triu_indices(size)] = hdmr_values
 
-        # loop over all combination of matrices
-        for ii in range(len(self.matrix_circuits)):
-            for jj in range(ii, len(self.matrix_circuits)):
+        # multiply by the coefficent matrix and sum the values
+        out = (coeff_matrix * hdmr_matrix).sum()
 
-            
-                if ii == jj:
-                    # add |c_i|^2 b_ii
-                    xii = cii_coeffs[iiterm] * proba[kterm]
-                    out += xii
-                    iiterm += 1
-
-                else:
-                    # add c_i* c_j b_ij
-                    xij = cij_coeffs[ijterm] * proba[kterm]
-                    out += xij 
-                    # add c_i c_j* b_ij^*
-                    out += xij.conj()
-                    ijterm += 1
-
-                kterm += 1
+        # add the conj that correspond to the tri low part of the matrix
+        out += out.conj()
 
         return out
 
     def get_cost_evaluation_function(
         self,
-        circuits: List[QuantumCircuit],
-        observables: List[Union[TensoredOp, None]],
-        coeffs: Tuple,
+        hdmr_tests_norm: List, 
+        hdmr_tests_overlap: List,
+        coefficient_matrix: np.ndarray,
     ) -> Callable[[np.ndarray], Union[float, List[float]]]:
         """Generate the cost function of the minimazation process
 
@@ -835,12 +704,11 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
     
         ansatz_params = self.ansatz.parameters
-        expect_ops = []
-        for circ, obs in zip(circuits, observables):
-            expect_ops.append(self.construct_expectation(ansatz_params, circ, obs))
+        for hdmr in hdmr_tests_norm:
+            hdmr.construct_expectation(ansatz_params)
 
-        # create a ListOp for performance purposes
-        expect_ops = ListOp(expect_ops)
+        for hdmr in hdmr_tests_overlap:
+            hdmr.construct_expectation(ansatz_params)
 
         def cost_evaluation(parameters):
 
@@ -850,21 +718,12 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                 zip(ansatz_params, parameter_sets.transpose().tolist())
             )
 
-            # TODO define a multiple sampler, one for each ops, to leverage caching
             # get the sampled output
-            out = []
-            for op in expect_ops:
-                sampled_expect_op = self._circuit_sampler.convert(
-                    op, params=param_bindings
-                )
-                out.append(
-                    self.get_probability_from_expected_value(
-                        sampled_expect_op.eval()[0]
-                    )
-                )
+            hdmr_values_norm = [hdrm.get_value(self._circuit_sampler, param_bindings) for hdrm in hdmr_tests_norm]
+            hdmr_values_overlap = [hdrm.get_value(self._circuit_sampler, param_bindings) for hdrm in hdmr_tests_overlap]
 
             # compute the total cost
-            cost = self.process_probability_circuit_output(out, coeffs)
+            cost = self._assemble_cost_function(hdmr_values_norm, hdmr_values_overlap, coefficient_matrix)
 
             # get the internediate results if required
             if self._callback is not None:
@@ -996,14 +855,11 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
             VariationalLinearSolverResult: Result of the optimization and solution vector of the linear system
         """
 
-        # compute the circuits
-        circuits = self.construct_circuit(matrix, vector)
+        # compute the circuits needed for the hadamard tests
+        hdmr_tests_norm, hdmr_tests_overlap = self.construct_circuit(matrix, vector)
 
-        # compute the observables needed for measuring the circiuts
-        observables = self.construct_observalbe(len(circuits))
-
-        # compute all the ci.conj * cj  for i<j
-        coeffs = self.get_hadamard_sum_coeffcients()
+        # compute he coefficient matrix 
+        coefficient_matrix = self.get_coefficient_matrix([mi.coeff for mi in self.matrix_circuits])
 
         # set an expectation for this algorithm run (will be reset to None at the end)
         initial_point = _validate_initial_point(self.initial_point, self.ansatz)
@@ -1012,11 +868,10 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         # Convert the gradient operator into a callable function that is compatible with the
         # optimization routine.
         gradient = self._gradient
-
         self._eval_count = 0
 
         # get the cost evaluation function
-        cost_evaluation = self.get_cost_evaluation_function(circuits, observables, coeffs)
+        cost_evaluation = self.get_cost_evaluation_function(hdmr_tests_norm, hdmr_tests_overlap, coefficient_matrix)
 
         if callable(self.optimizer):
             opt_result = self.optimizer(  # pylint: disable=not-callable
