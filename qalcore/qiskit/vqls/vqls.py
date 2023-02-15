@@ -509,21 +509,19 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
 
     @staticmethod
-    def get_coefficient_matrix(coeffs):
+    def get_coefficient_matrix(coeffs) -> np.ndarray:
         """Compute all the vi* vj terms
 
         Args:
-            coeffs (list): list of complex coefficients
+            coeffs (np.ndarray): list of complex coefficients
         """
-        output = np.array(list(itertools.combinations(coeffs,2))) 
-        output[:,0] = output[:,0].conj()
-        return output.prod(1)
+        return coeffs[:,None].conj() @ coeffs[None,:]
 
     def _assemble_cost_function(
         self, 
-        hdmr_values_norm: List,
-        hdmr_values_overlap: List,
-        coefficient_matrix: np.array
+        hdmr_values_norm: np.ndarray,
+        hdmr_values_overlap: np.ndarray,
+        coefficient_matrix: np.ndarray
     ) -> float:
         r"""Compute the final cost function from the output of the different circuits
 
@@ -567,7 +565,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
     def _compute_normalization_term(
         self,
         coeff_matrix: np.ndarray,
-        hdmr_values: List,
+        hdmr_values: np.ndarray,
     ) -> float:
         r"""Compute <phi|phi>
 
@@ -584,7 +582,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
         # compute all the terms in <\phi|\phi> = \sum c_i* cj <0|V Ai* Aj V|0>
         # hdrm_values here contains the values of the <0|V Ai* Aj V|0>  with j>i
-        out = np.array(hdmr_values)
+        out = hdmr_values
 
         # we multiuply hdmrval by the triup coeff matrix and sum
         out *= coeff_matrix[np.triu_indices_from(coeff_matrix, k=1)]
@@ -603,7 +601,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
     def _compute_global_terms(
         self,
         coeff_matrix: np.ndarray,
-        hdmr_values: List,
+        hdmr_values: np.ndarray,
     ) -> float:
         """Compute |<b|phi>|^2
 
@@ -643,7 +641,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
     def _compute_local_terms(
         self,
         coeff_matrix: np.ndarray,
-        hdmr_values: List,
+        hdmr_values: np.ndarray,
     ) -> float:
         """Compute the term of the local cost function given by
 
@@ -657,10 +655,9 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         Returns:
             float: value of the sum
         """
-
+        print(hdmr_values)
         # add all the hadamard test values corresponding to the insertion of Z gates on the same cicuit
         # b_ij = \sum_n \\frac{1}{n} \\sum_n \\langle 0|V^* A_i U Z_n U^* A_j^* V|0\\rangle
-        hdmr_values = np.array(hdmr_values)
         num_zgate = self.matrix_circuits[0].circuit.num_qubits
         hdmr_values = hdmr_values.reshape(-1, num_zgate).mean(1)
 
@@ -669,8 +666,10 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         size = len(self.matrix_circuits)
         hdmr_matrix = np.zeros((size,size))
         hdmr_matrix[np.triu_indices(size)] = hdmr_values
-
+        print(hdmr_matrix)
+        
         # multiply by the coefficent matrix and sum the values
+        
         out = (coeff_matrix * hdmr_matrix).sum()
 
         # add the conj that correspond to the tri low part of the matrix
@@ -719,11 +718,15 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
             )
 
             # get the sampled output
-            hdmr_values_norm = [hdrm.get_value(self._circuit_sampler, param_bindings) for hdrm in hdmr_tests_norm]
-            hdmr_values_overlap = [hdrm.get_value(self._circuit_sampler, param_bindings) for hdrm in hdmr_tests_overlap]
+            hdmr_values_norm = np.array([hdrm.get_value(self._circuit_sampler, param_bindings) 
+                                                                for hdrm in hdmr_tests_norm])
+            hdmr_values_overlap = np.array([hdrm.get_value(self._circuit_sampler, param_bindings) 
+                                                                for hdrm in hdmr_tests_overlap])
 
             # compute the total cost
-            cost = self._assemble_cost_function(hdmr_values_norm, hdmr_values_overlap, coefficient_matrix)
+            cost = self._assemble_cost_function(hdmr_values_norm, 
+                                                hdmr_values_overlap, 
+                                                coefficient_matrix)
 
             # get the internediate results if required
             if self._callback is not None:
@@ -859,7 +862,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         hdmr_tests_norm, hdmr_tests_overlap = self.construct_circuit(matrix, vector)
 
         # compute he coefficient matrix 
-        coefficient_matrix = self.get_coefficient_matrix([mi.coeff for mi in self.matrix_circuits])
+        coefficient_matrix = self.get_coefficient_matrix(np.array([mi.coeff for mi in self.matrix_circuits]))
 
         # set an expectation for this algorithm run (will be reset to None at the end)
         initial_point = _validate_initial_point(self.initial_point, self.ansatz)
