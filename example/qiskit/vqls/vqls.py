@@ -4,6 +4,8 @@ from qiskit.algorithms.optimizers import COBYLA
 from qiskit import Aer
 import numpy as np
 from qiskit.algorithms.linear_solvers.numpy_linear_solver import NumPyLinearSolver
+from qiskit.quantum_info import Statevector
+import matplotlib.pyplot as plt
 
 
 
@@ -20,8 +22,18 @@ vqls = VQLS(
     ansatz=ansatz,
     optimizer=COBYLA(maxiter=200, disp=True),
     quantum_instance=Aer.get_backend("aer_simulator_statevector"),
-    use_overlap_test=True,
-    use_local_cost_function=False   
+    use_overlap_test=False,
+    use_local_cost_function=True   
 )
 
+
 res = vqls.solve(A, b)
+
+
+ref_solution = classical_solution.state / np.linalg.norm(classical_solution.state)
+vqls_solution = np.real(Statevector(res.state).data)
+
+
+plt.scatter(ref_solution, vqls_solution)
+plt.plot([-1, 1], [-1, 1], "--")
+plt.show()

@@ -340,26 +340,25 @@ class HadammardOverlapTest:
         coeffs = np.array([1,1,1,-1])
         for _ in range(1,self.operator_num_qubits):
             coeffs = np.tensordot(coeffs, c0, axes=0).flatten()
-        coeffs = np.array([1,1,1,-1]*(2*2**(self.operator_num_qubits-1)))
+        # coeffs = np.array([1,1,1,-1]*(2*2**(self.operator_num_qubits-1)))
 
         # create the reordering index to map
-        # A0 A1 .. AN B0 B1 ... BN to A0 B0 A1 B1 ... AN BN
+        # A0 A1 .. AN B0 B1 ... BN => A0 B0 A1 B1 ... AN BN
         bit_strings = []
         for i in range(2**(self.operator_num_qubits)):
             bit_strings.append( f"{i:b}".zfill(self.operator_num_qubits) )
 
-        reordering_index = [0]*(2**(2*self.operator_num_qubits))
-        i = 0 
+
+        reordered_coeffs = np.zeros_like(coeffs)
+
         for bs1 in bit_strings:
             for bs2 in bit_strings:
+                idx = int(bs1+bs2, 2)
                 new_bit_string = ''.join([i+j for i,j in zip(bs1, bs2)])
-                idx = int(new_bit_string,2)
-                reordering_index[idx] = i
-                i+=1
+                idx_ori = int(new_bit_string,2)
+                reordered_coeffs[idx] = coeffs[idx_ori]
 
-        coeffs = coeffs[reordering_index]
-
-        return coeffs 
+        return reordered_coeffs 
 
     def construct_expectation(self, parameter: Union[List[float], List[Parameter], np.ndarray, None] = None):
         r"""
@@ -386,10 +385,10 @@ class HadammardOverlapTest:
 
     def get_value(self, circuit_sampler, param_binding: dict) -> List:
 
-        
-
         def post_processing(exp_val) -> float:
-            exp_val = (exp_val.to_matrix()[0])**2
+            exp_val = (exp_val.to_matrix()[0])
+            exp_val = (exp_val * exp_val.conj())
+            
             p0 = (exp_val[0::2] * self.post_process_coeffs).sum()
             p1 = (exp_val[1::2] * self.post_process_coeffs).sum()
 

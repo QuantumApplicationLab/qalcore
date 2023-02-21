@@ -63,6 +63,16 @@ from qalcore.qiskit.vqls.variational_linear_solver import (
 from qalcore.qiskit.vqls.numpy_unitary_matrices import UnitaryDecomposition
 from qalcore.qiskit.vqls.hadamard_test import HadammardTest, HadammardOverlapTest
 
+from dataclasses import dataclass
+
+@dataclass
+class VQLSLog:
+    values: List
+    parameters: List 
+    def update(self, count, cost, parameters):
+        self.values.append(cost)
+        self.parameters.append(parameters)
+        print(f"VQLS Iteration {count} Cost {cost}", end="\r", flush=True)
 
 class VQLS(VariationalAlgorithm, VariationalLinearSolver):
     r"""Systems of linear equations arise naturally in many real-life applications in a wide range
@@ -213,6 +223,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
         self._use_local_cost_function = None
         self.use_local_cost_function = use_local_cost_function
+        
 
         if use_local_cost_function and use_overlap_test:
             raise ValueError("Hadammard Overlap Tests not supported with local cost function")
@@ -426,11 +437,32 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         else:
             raise ValueError("Format of the input matrix not recognized")
 
-
-
         # create only the circuit for <psi|psi> =  <0|V A_n ^* A_m V|0>
         # with n != m as the diagonal terms (n==m) always give a proba of 1.0
+        hdmr_tests_norm = self._get_norm_circuits(appply_explicit_measurement)
+        
+        # create the circuits for <b|psi> 
+        # local cost function
+        if self._use_local_cost_function:
+            hdmr_tests_overlap = self._get_local_circuits(appply_explicit_measurement)
+        # global cost function 
+        else:
+            hdmr_tests_overlap = self._get_global_circuits(appply_explicit_measurement)
+
+        return hdmr_tests_norm, hdmr_tests_overlap
+
+    def _get_norm_circuits(self, appply_explicit_measurement: bool) -> List[QuantumCircuit]:
+        """_summary_
+
+        Raises:
+            RuntimeError: _description_
+
+        Returns:
+            List[QuantumCircuit]: _description_
+        """
+
         hdmr_tests_norm = []
+
         for ii in range(len(self.matrix_circuits)):
             mi = self.matrix_circuits[ii]
 
@@ -442,71 +474,88 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                     apply_measurement=appply_explicit_measurement,
                     )
                 )
+        return hdmr_tests_norm
 
+    def _get_local_circuits(self, appply_explicit_measurement: bool) -> List[QuantumCircuit]:
+        """_summary_
 
-        # create the circuits for <b|psi> 
+        Args:
+            appply_explicit_measurement (bool): _description_
+
+        Returns:
+            List[QuantumCircuit]: _description_
+        """
+
         hdmr_tests_overlap = []
-        # local cost function
-        if self._use_local_cost_function:
+        num_z = self.matrix_circuits[0].circuit.num_qubits
 
-            num_z = self.matrix_circuits[0].circuit.num_qubits
+        # create the circuits for <0| U^* A_l V(Zj . Ij|) V^* Am^* U|0>
+        for ii in range(len(self.matrix_circuits)):
+            mi = self.matrix_circuits[ii]
 
-            # create the circuits for <0| U^* A_l V(Zj . Ij|) V^* Am^* U|0>
+            for jj in range(ii, len(self.matrix_circuits)):
+                mj = self.matrix_circuits[jj]
+
+                for iq in range(num_z):
+
+                    # circuit for the CZ operation on the iqth qubit
+                    qc_z = QuantumCircuit(num_z+1)
+                    qc_z.cz(0, iq+1)
+
+                    # create Hadammard circuit
+                    hdmr_tests_overlap.append(HadammardTest(
+                        operators = [mi.circuit,
+                                    self.vector_circuit.inverse(),
+                                    qc_z,
+                                    self.vector_circuit,
+                                    mj.circuit.inverse()],
+                        apply_control_to_operator=[True, True, False, True, True],
+                        apply_initial_state = self.ansatz,
+                        apply_measurement = appply_explicit_measurement 
+                        )
+                    )
+        return hdmr_tests_overlap
+
+    def _get_global_circuits(self, appply_explicit_measurement: bool) -> List[QuantumCircuit]:
+        """_summary_
+
+        Args:
+            appply_explicit_measurement (bool): _description_
+
+        Raises:
+            RuntimeError: _description_
+
+        Returns:
+            List[QuantumCircuit]: _description_
+        """
+
+        hdmr_tests_overlap = []
+        # create the circuits for <0|U^* A_l V|0\rangle\langle 0| V^* Am^* U|0>
+        # either using overal test or hadammard test
+        if self._use_overlap_test:
+
             for ii in range(len(self.matrix_circuits)):
                 mi = self.matrix_circuits[ii]
 
                 for jj in range(ii, len(self.matrix_circuits)):
                     mj = self.matrix_circuits[jj]
 
-                    for iq in range(num_z):
-
-                        # circuit for the CZ operation on the iqth qubit
-                        qc_z = QuantumCircuit(num_z+1)
-                        qc_z.cz(0, iq+1)
-
-                        # create Hadammard circuit
-                        hdmr_tests_overlap.append(HadammardTest(
-                            operators = [mi.circuit.inverse(),
-                                        self.vector_circuit,
-                                        qc_z,
-                                        self.vector_circuit.inverse(),
-                                         mj.circuit],
-                            apply_control_to_operator=[True, True, False, True, True],
-                            apply_initial_state = self.ansatz,
-                            apply_measurement = appply_explicit_measurement 
-                            )
-                        )
-
-        # global cost function 
-        else:
-
-            # create the circuits for <0|U^* A_l V|0\rangle\langle 0| V^* Am^* U|0>
-            # either using overal test or hadammard test
-            if self._use_overlap_test:
-
-                for ii in range(len(self.matrix_circuits)):
-                    mi = self.matrix_circuits[ii]
-
-                    for jj in range(ii, len(self.matrix_circuits)):
-                        mj = self.matrix_circuits[jj]
-
-                        hdmr_tests_overlap.append(HadammardOverlapTest(
-                            operators = [self.vector_circuit, mi.circuit, mj.circuit],
-                            apply_initial_state = self.ansatz,
-                            apply_measurement = appply_explicit_measurement 
-                            )
-                        )
-            else:
-                
-                for mi in self.matrix_circuits:
-                    hdmr_tests_overlap.append(HadammardTest(
-                        operators=[self.ansatz, mi.circuit, self.vector_circuit.inverse()],
-                        apply_measurement=appply_explicit_measurement,
+                    hdmr_tests_overlap.append(HadammardOverlapTest(
+                        operators = [self.vector_circuit, mi.circuit, mj.circuit],
+                        apply_initial_state = self.ansatz,
+                        apply_measurement = appply_explicit_measurement 
                         )
                     )
+        else:
+            
+            for mi in self.matrix_circuits:
+                hdmr_tests_overlap.append(HadammardTest(
+                    operators=[self.ansatz, mi.circuit, self.vector_circuit.inverse()],
+                    apply_measurement=appply_explicit_measurement,
+                    )
+                )
 
-        return hdmr_tests_norm, hdmr_tests_overlap
-
+        return hdmr_tests_overlap
 
     @staticmethod
     def get_coefficient_matrix(coeffs) -> np.ndarray:
@@ -554,7 +603,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         # overall cost
         cost = 1.0 - np.real(sum_terms / norm)
 
-        print("Cost function %f" % cost)
+        # print("Cost function %f" % cost)
         return cost
 
     def _compute_normalization_term(
@@ -616,17 +665,17 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
             # hdmr_values here contains the values of <0|V* Ai* U|0><0|V Aj U|0> for j>=i
             # we first insert these values in a tri up matrix
             size = len(self.matrix_circuits)
-            hdmr_matrix = np.zeros((size,size))
-            hdmr_matrix[np.triu_indices(size)] = hdmr_values
-
-            # multiply by the coefficent matrix and sum the values
-            out_matrix = coeff_matrix * hdmr_matrix
-            out = out_matrix.sum()
+            hdmr_matrix = np.zeros((size,size)).astype('complex128')
+            hdmr_matrix[np.tril_indices(size)] = hdmr_values
 
             # add the conj that correspond to the tri low part of the matrix
             # warning the diagonal is also contained in out and we only
             # want to add the conj of the tri up excluding the diag
-            out += (out_matrix[np.triu_indices_from(out_matrix, k=1)].conj()).sum()    
+            hdmr_matrix[np.triu_indices_from(hdmr_matrix, k=1)] = hdmr_matrix[np.tril_indices_from(hdmr_matrix, k=-1)].conj()
+
+            # multiply by the coefficent matrix and sum the values
+            out_matrix = coeff_matrix * hdmr_matrix
+            out = out_matrix.sum() 
                     
         else:
             # hdmr_values here contains the values of <0|V* Ai* U|0>
@@ -663,18 +712,18 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         # hdmr_values then contains the values of <0|V* Ai* U|0><0|V Aj U|0> for j>=i
         # we first insert these values in a tri up matrix
         size = len(self.matrix_circuits)
-        hdmr_matrix = np.zeros((size,size))
+        hdmr_matrix = np.zeros((size,size)).astype('complex128')
         hdmr_matrix[np.triu_indices(size)] = hdmr_values
-        
+
+        # add the conj that correspond to the tri low part of the matrix
+        # warning the diagonal is also contained in out and we only
+        # want to add the conj of the tri up excluding the diag        
+        hdmr_matrix[np.tril_indices_from(hdmr_matrix, k=-1)] = hdmr_matrix[np.triu_indices_from(hdmr_matrix, k=1)].conj()
+
         
         # multiply by the coefficent matrix and sum the values
         out_matrix = coeff_matrix * hdmr_matrix
         out = (out_matrix).sum()
-
-        # add the conj that correspond to the tri low part of the matrix
-        # warning the diagonal is also contained in out and we only
-        # want to add the conj of the tri up excluding the diag
-        out += (out_matrix[np.triu_indices_from(out_matrix, k=1)].conj()).sum()
 
         # add \sum c_i* cj <0|V Ai* Aj V|0>
         out += norm
@@ -716,6 +765,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         for hdmr in hdmr_tests_overlap:
             hdmr.construct_expectation(ansatz_params)
 
+
         def cost_evaluation(parameters):
 
             # Create dict associating each parameter with the lists of parameterization values for it
@@ -735,13 +785,14 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                                                 hdmr_values_overlap, 
                                                 coefficient_matrix)
 
-            # get the internediate results if required
+            # get the intermediate results if required
             if self._callback is not None:
                 for param_set in parameter_sets:
                     self._eval_count += 1
                     self._callback(self._eval_count, cost, param_set)
             else:
                 self._eval_count += 1
+                print(f"VQLS Iteration {self._eval_count} Cost {cost}", end="\r", flush=True) 
 
             return cost
 
