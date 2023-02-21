@@ -29,9 +29,9 @@ from qiskit.utils import QuantumInstance
 from qiskit.utils.backend_utils import is_aer_provider, is_statevector_backend
 from qiskit.utils.validation import validate_min
 
-from qiskit.algorithms.linear_solvers.observables.linear_system_observable import (
-    LinearSystemObservable,
-)
+# from qiskit.algorithms.linear_solvers.observables.linear_system_observable import (
+#     LinearSystemObservable,
+# )
 
 from qiskit.algorithms.minimum_eigen_solvers.vqe import (
     _validate_bounds,
@@ -750,7 +750,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
     def _calculate_observable(
         self,
         solution: QuantumCircuit,
-        observable: Optional[Union[LinearSystemObservable, BaseOperator]] = None,
+        observable: Optional[BaseOperator] = None,
         observable_circuit: Optional[QuantumCircuit] = None,
         post_processing: Optional[
             Callable[[Union[float, List[float]]], Union[float, List[float]]]
@@ -779,9 +779,6 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         if observable is not None:
             observable_circuit = observable.observable_circuit(nb)
             post_processing = observable.post_processing
-
-            if isinstance(observable, LinearSystemObservable):
-                observable = observable.observable(nb)
 
         is_list = True
         if not isinstance(observable_circuit, list):
@@ -832,9 +829,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         vector: Union[np.ndarray, QuantumCircuit],
         observable: Optional[
             Union[
-                LinearSystemObservable,
                 BaseOperator,
-                List[LinearSystemObservable],
                 List[BaseOperator],
             ]
         ] = None,
