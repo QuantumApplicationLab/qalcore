@@ -19,7 +19,7 @@ from qiskit.test import QiskitTestCase
 import numpy as np
 from scipy.optimize import minimize as scipy_minimize
 from ddt import data, ddt, idata, unpack
-from qiskit.algorithms.linear_solvers.numpy_linear_solver import NumPyLinearSolver
+# from qiskit.algorithms.linear_solvers.numpy_linear_solver import NumPyLinearSolver
 
 from qiskit import BasicAer, QuantumCircuit
 from qiskit.circuit.library import RealAmplitudes
@@ -78,7 +78,7 @@ class TestVQLS(QiskitTestCase):
     def test_numpy_input_statevector(self, matrix, rhs, ansatz):
         """Test the VQLS on matrix input using statevector simulator."""
         
-        classical_solution = NumPyLinearSolver().solve(matrix, rhs/np.linalg.norm(rhs))
+        # classical_solution = NumPyLinearSolver().solve(matrix, rhs/np.linalg.norm(rhs))
         
         vqls = VQLS(
             ansatz=ansatz,
@@ -87,8 +87,8 @@ class TestVQLS(QiskitTestCase):
         )
         res = vqls.solve(matrix, rhs)
 
-        ref_solution = np.abs(classical_solution.state / np.linalg.norm(classical_solution.state))
-        vqls_solution = np.abs(np.real(Statevector(res.state).data))
+        # ref_solution = np.abs(classical_solution.state / np.linalg.norm(classical_solution.state))
+        # vqls_solution = np.abs(np.real(Statevector(res.state).data))
         
         # with self.subTest(msg="test solution"):
         #     assert np.allclose(ref_solution, vqls_solution, atol=1E-1, rtol=1E-1)
@@ -122,7 +122,7 @@ class TestVQLS(QiskitTestCase):
         np_matrix = matrix.recompose(matrix.coefficients, matrix.unitary_matrices )
         np_rhs = Operator(rhs).data @ np.array([1,0,0,0])
 
-        classical_solution = NumPyLinearSolver().solve(np_matrix, np_rhs/np.linalg.norm(np_rhs))
+        # classical_solution = NumPyLinearSolver().solve(np_matrix, np_rhs/np.linalg.norm(np_rhs))
         
         vqls = VQLS(
             ansatz=ansatz,
@@ -131,8 +131,8 @@ class TestVQLS(QiskitTestCase):
         )
         res = vqls.solve([[0.5, qc1], [0.5, qc2]], rhs)
 
-        ref_solution = np.abs(classical_solution.state / np.linalg.norm(classical_solution.state))
-        vqls_solution = np.abs(np.real(Statevector(res.state).data))
+        # ref_solution = np.abs(classical_solution.state / np.linalg.norm(classical_solution.state))
+        # vqls_solution = np.abs(np.real(Statevector(res.state).data))
         
         # with self.subTest(msg="test solution"):
         #     assert np.allclose(ref_solution, vqls_solution, atol=1E-1, rtol=1E-1)
