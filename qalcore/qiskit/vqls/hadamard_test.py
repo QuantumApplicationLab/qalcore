@@ -340,7 +340,7 @@ class HadammardOverlapTest:
         coeffs = np.array([1,1,1,-1])
         for _ in range(1,self.operator_num_qubits):
             coeffs = np.tensordot(coeffs, c0, axes=0).flatten()
-        # coeffs = np.array([1,1,1,-1]*(2*2**(self.operator_num_qubits-1)))
+
 
         # create the reordering index to map
         # A0 A1 .. AN B0 B1 ... BN => A0 B0 A1 B1 ... AN BN
