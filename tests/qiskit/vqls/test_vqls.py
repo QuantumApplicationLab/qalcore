@@ -31,7 +31,7 @@ from qalcore.qiskit.vqls.numpy_unitary_matrices import UnitaryDecomposition
 from qiskit.quantum_info import Operator
 from qiskit.algorithms.optimizers import COBYLA
 
-from qalcore.qiskit.vqls import VQLS
+from qalcore.qiskit.vqls import VQLS, VQLSLog
 
 if has_aer():
     from qiskit import Aer
@@ -75,6 +75,8 @@ class TestVQLS(QiskitTestCase):
             )
         )
 
+        self.log = VQLSLog([],[])
+
     def test_numpy_input(self, matrix, rhs, ansatz):
         """Test the VQLS on matrix input using statevector simulator."""
         
@@ -94,6 +96,7 @@ class TestVQLS(QiskitTestCase):
                     ansatz=ansatz,
                     optimizer=COBYLA(maxiter=2, disp=True),
                     quantum_instance=qi,
+                    callback=self.log.update,
                     use_local_cost_function=opt["use_local_cost_function"],
                     use_overlap_test=opt["use_overlap_test"]
                 )
@@ -141,6 +144,7 @@ class TestVQLS(QiskitTestCase):
                     ansatz=ansatz,
                     optimizer=COBYLA(maxiter=2, disp=True),
                     quantum_instance=qi,
+                    callback=self.log.update,
                     use_local_cost_function=opt["use_local_cost_function"],
                     use_overlap_test=opt["use_overlap_test"]
                 )
