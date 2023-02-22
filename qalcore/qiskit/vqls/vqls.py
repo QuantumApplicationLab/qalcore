@@ -763,7 +763,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         return cost_evaluation
 
  
-    def _validate_solve_options(self, options: Union[Dict, None]):
+    def _validate_solve_options(self, options: Union[Dict, None]) -> Dict:
         """validate the options used for the solve methods
 
         Args:
@@ -786,7 +786,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
             raise ValueError("Local cost function cannot be used with Hadamard Overlap test")
 
         return options 
-        
+
     def solve(
         self,
         matrix: Union[np.ndarray, QuantumCircuit, List[QuantumCircuit]],

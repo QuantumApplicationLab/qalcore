@@ -96,11 +96,9 @@ class TestVQLS(QiskitTestCase):
                     ansatz=ansatz,
                     optimizer=COBYLA(maxiter=2, disp=True),
                     quantum_instance=qi,
-                    callback=self.log.update,
-                    use_local_cost_function=opt["use_local_cost_function"],
-                    use_overlap_test=opt["use_overlap_test"]
+                    callback=self.log.update
                 )
-                res = vqls.solve(matrix, rhs)
+                res = vqls.solve(matrix, rhs, opt)
 
                 # ref_solution = np.abs(classical_solution.state / np.linalg.norm(classical_solution.state))
                 # vqls_solution = np.abs(np.real(Statevector(res.state).data))
@@ -144,11 +142,9 @@ class TestVQLS(QiskitTestCase):
                     ansatz=ansatz,
                     optimizer=COBYLA(maxiter=2, disp=True),
                     quantum_instance=qi,
-                    callback=self.log.update,
-                    use_local_cost_function=opt["use_local_cost_function"],
-                    use_overlap_test=opt["use_overlap_test"]
+                    callback=self.log.update
                 )
-                res = vqls.solve([[0.5, qc1], [0.5, qc2]], rhs)
+                res = vqls.solve([[0.5, qc1], [0.5, qc2]], rhs, opt)
 
                 # ref_solution = np.abs(classical_solution.state / np.linalg.norm(classical_solution.state))
                 # vqls_solution = np.abs(np.real(Statevector(res.state).data))
