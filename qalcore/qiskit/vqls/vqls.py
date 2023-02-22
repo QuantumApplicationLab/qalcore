@@ -122,8 +122,6 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         optimizer: Optional[Union[Optimizer, Minimizer]] = None,
         initial_point: Optional[np.ndarray] = None,
         gradient: Optional[Union[GradientBase, Callable]] = None,
-        expectation: Optional[ExpectationBase] = None,
-        include_custom: Optional[bool] = False,
         max_evals_grouped: Optional[int] = 1,
         callback: Optional[Callable[[int, np.ndarray, float, float], None]] = None,
         quantum_instance: Optional[Union[Backend, QuantumInstance]] = None,
@@ -135,21 +133,9 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
             optimizer: A classical optimizer. Can either be a Qiskit optimizer or a callable
                 that takes an array as input and returns a Qiskit or SciPy optimization result.
             initial_point: An optional initial point (i.e. initial parameter values)
-                for the optimizer. If ``None`` then VQE will look to the ansatz for a preferred
+                for the optimizer. If ``None`` then VQLS will look to the ansatz for a preferred
                 point and if not will simply compute a random one.
             gradient: An optional gradient function or operator for optimizer.
-            expectation: The Expectation converter for taking the average value of the
-                Observable over the ansatz state function. When ``None`` (the default) an
-                :class:`~qiskit.opflow.expectations.ExpectationFactory` is used to select
-                an appropriate expectation based on the operator and backend. When using Aer
-                qasm_simulator backend, with paulis, it is however much faster to leverage custom
-                Aer function for the computation but, although VQE performs much faster
-                with it, the outcome is ideal, with no shot noise, like using a state vector
-                simulator. If you are just looking for the quickest performance when choosing Aer
-                qasm_simulator and the lack of shot noise is not an issue then set `include_custom`
-                parameter here to ``True`` (defaults to ``False``).
-            include_custom: When `expectation` parameter here is None setting this to ``True`` will
-                allow the factory to include the custom Aer pauli expectation.
             max_evals_grouped: Max number of evaluations performed simultaneously. Signals the
                 given optimizer that more than one set of parameters can be supplied so that
                 potentially the expectation values can be computed in parallel. Typically this is
@@ -173,7 +159,6 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
         self._max_evals_grouped = max_evals_grouped
         self._circuit_sampler = None  # type: Optional[CircuitSampler]
-        self._include_custom = include_custom
 
         self._ansatz = None
         self.ansatz = ansatz
@@ -192,9 +177,6 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         if quantum_instance is None:
             quantum_instance = Aer.get_backend("aer_simulator_statevector")
         self.quantum_instance = quantum_instance
-
-        self._expectation = None
-        self.expectation = expectation
 
         self._callback = None
         self.callback = callback
