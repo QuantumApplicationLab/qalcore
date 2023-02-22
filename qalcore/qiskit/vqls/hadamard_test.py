@@ -388,8 +388,12 @@ class HadammardOverlapTest:
 
     def get_value(self, circuit_sampler, param_binding: dict) -> List:
 
-        def post_processing(exp_val) -> float:
-            exp_val = (exp_val.to_matrix()[0])
+        def post_processing(exp_val, isstatevector) -> float:
+            if isstatevector:
+                exp_val = (exp_val.to_matrix()[0])
+            else:
+                exp_val = (exp_val.to_matrix()[0][0])
+
             exp_val = (exp_val * exp_val.conj())
             
             p0 = (exp_val[0::2] * self.post_process_coeffs).sum()
@@ -400,7 +404,7 @@ class HadammardOverlapTest:
         out = []
         for op in self.expect_ops:
             sampled_val = circuit_sampler.convert(op, params=param_binding).eval()
-            out.append(post_processing(sampled_val))
+            out.append(post_processing(sampled_val, circuit_sampler._statevector))
 
         out = np.array(out).astype('complex128')
         out *= np.array([1.0, 1.0j])
