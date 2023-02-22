@@ -77,7 +77,7 @@ class TestVQLS(QiskitTestCase):
 
         self.log = VQLSLog([],[])
 
-    def test_numpy_input(self, matrix, rhs, ansatz):
+    def test_numpy_input(self):
         """Test the VQLS on matrix input using statevector simulator."""
         
         matrix = np.array([ [0.50, 0.25, 0.10, 0.00],
