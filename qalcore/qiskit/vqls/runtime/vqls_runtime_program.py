@@ -306,7 +306,7 @@ def fmin_spsa(
     )
 
 
-class VariationalLinearSolverResult(LinearSolverResult, VariationalResult):
+class VariationalLinearSolverResult(VariationalResult):
     """A base class for linear systems results using variational methods
 
     The  linear systems variational algorithms return an object of the type ``VariationalLinearSystemsResult``
@@ -351,9 +351,7 @@ class VariationalLinearSolver(ABC):
         vector: Union[np.ndarray, QuantumCircuit],
         observable: Optional[
             Union[
-                LinearSystemObservable,
                 BaseOperator,
-                List[LinearSystemObservable],
                 List[BaseOperator],
             ]
         ] = None,
@@ -383,7 +381,10 @@ class VariationalLinearSolver(ABC):
 
 
 class UnitaryDecomposition:
-    # https://math.stackexchange.com/questions/1710247/every-matrix-can-be-written-as-a-sum-of-unitary-matrices/1710390#1710390
+    r"""Compute the unitary decomposition of a general matrix
+    See:
+        https://math.stackexchange.com/questions/1710247/every-matrix-can-be-written-as-a-sum-of-unitary-matrices/1710390#1710390
+    """
 
     def __init__(
         self,
@@ -395,7 +396,7 @@ class UnitaryDecomposition:
         check_decomposition: Optional[bool] = True,
         normalize_coefficients: Optional[bool] = True,
     ):
-        """_summary_
+        """Unitary decomposition
 
         Args:
             matrix (Optional[np.ndarray], optional): input matrix to be transformed.
@@ -415,6 +416,8 @@ class UnitaryDecomposition:
         self.coefficients = coefficients
 
         self._unitary_matrices = None
+
+        self.iiter = None
 
         # if circuits are provided
         if self._circuits is not None:
@@ -538,8 +541,7 @@ class UnitaryDecomposition:
             )
             self.iiter += 1
             return out
-        else:
-            raise StopIteration
+        raise StopIteration
 
     def __len__(self):
         return len(self._circuits)
@@ -654,19 +656,21 @@ class UnitaryDecomposition:
 
 
 class HadammardTest:
+    r"""Class to compute the Hadamard Test
+    """
     def __init__(
         self,
         operators: Union[QuantumCircuit, List[QuantumCircuit]],
         use_barrier: Optional[bool] = False,
-        apply_control_to_operator: Optional[bool] = True,
+        apply_control_to_operator: Optional[Union[bool, List[bool]]] = True,
         apply_initial_state: Optional[QuantumCircuit] = None,
         apply_measurement: Optional[bool] = False,
-    ) -> List[QuantumCircuit]:
-        """Create the quantum circuits required to compute the hadamard test:
+    ) :
+        r"""Create the quantum circuits required to compute the hadamard test:
 
         .. math::
 
-            \langle \Psi | U | \Psi \rangle
+            \\langle \\Psi | U | \\Psi \\rangle
 
         Args:
             operators (Union[QuantumCircuit, List[QuantumCircuit]]): quantum circuit or list of quantum circuits representing the U.
@@ -675,14 +679,15 @@ class HadammardTest:
             apply_initial_state (Optional[QuantumCircuit], optional): Quantum Circuit to create |Psi> from |0>. If None, assume that the qubits are alredy in Psi.
             apply_measurement (Optional[bool], optional): apply explicit measurement. Defaults to False.
 
-        Returns:
-            List[QuantumCircuit]: List of quamtum circuits required to compute the Hadammard Test.
         """
 
         if isinstance(operators, QuantumCircuit):
             operators = [operators]
 
-        if apply_control_to_operator:
+        if not isinstance(apply_control_to_operator, list):
+            apply_control_to_operator = [apply_control_to_operator]*len(operators)
+
+        if apply_control_to_operator[0]:
             self.num_qubits = operators[0].num_qubits + 1
             if apply_initial_state is not None:
                 if apply_initial_state.num_qubits != operators[0].num_qubits:
@@ -712,23 +717,11 @@ class HadammardTest:
         # number of circuits required
         self.ncircuits = len(self.circuits)
 
-    def __iter__(self):
-        self.iiter = 0
-        return self
+        # compute the observables
+        self.observable = self._build_observable()
 
-    def __next__(self):
-        if self.iiter < self.ncircuits:
-            out = self.circuits[self.iiter]
-            self.iiter += 1
-            return out
-        else:
-            raise StopIteration
-
-    def __len__(self):
-        return len(self.circuits)
-
-    def __getitem__(self, index):
-        return self.circuits[index]
+        # init the expectation
+        self.expect_ops = None
 
     def _build_circuit(
         self,
@@ -779,8 +772,8 @@ class HadammardTest:
                 qc.barrier()
 
             # matrix circuit
-            for op in operators:
-                if apply_control_to_operator:
+            for op, ctrl in zip(operators, apply_control_to_operator):
+                if ctrl:
                     qc.compose(
                         op.control(1),
                         qubits=list(range(0, self.num_qubits)),
@@ -802,6 +795,341 @@ class HadammardTest:
 
         return circuits
 
+    def _build_observable(self) -> List[TensoredOp]:
+        """Create the operator to measure |1> on the control qubit.
+
+        Returns:
+            Lis[TensoredOp]: List of two observables to measure |1> on the control qubit I^...^I^|1><1|
+        """
+
+        one_op = (I - Z) / 2
+        one_op_ctrl = TensoredOp((self.num_qubits - 1) * [I]) ^ one_op
+        return one_op_ctrl
+
+    def construct_expectation(self, parameter: Union[List[float], List[Parameter], np.ndarray, None] = None):
+        r"""
+        Generate the ansatz circuit and expectation value measurement, and return their
+        runnable composition.
+
+        Args:
+            parameter: Parameters for the ansatz circuit.
+        
+        Returns:
+            The Operator equalling the measurement of the circuit :class:`StateFn` by the
+            observable's expectation :class:`StateFn`
+        """
+
+        exp_val = []
+
+        for circ in self.circuits:
+            if parameter is not None:
+                exp_val.append(~StateFn(self.observable) @ StateFn(circ.assign_parameters(parameter)))
+            else:
+                exp_val.append(~StateFn(self.observable) @ StateFn(circ))
+
+        self.expect_ops = ListOp(exp_val)
+
+    def get_value(self, circuit_sampler, param_binding: dict) -> List:
+
+        def post_processing(exp_val) -> float:
+            return 1.0 - 2.0 * exp_val[0]
+
+        out = []
+        for op in self.expect_ops:
+            sampled_val = circuit_sampler.convert(op, params=param_binding).eval()
+            out.append(post_processing(sampled_val))
+
+        out = np.array(out).astype('complex128')
+        out *= np.array([1.0, 1.0j])
+
+        return out.sum()
+
+
+
+class HadammardOverlapTest:
+    r"""Class to compute the Hadamard Test
+    """
+    def __init__(
+        self,
+        operators: List[QuantumCircuit],
+        use_barrier: Optional[bool] = False,
+        apply_initial_state: Optional[QuantumCircuit] = None,
+        apply_measurement: Optional[bool] = False,
+    ) :
+        r"""Create the quantum circuits required to compute the hadamard test:
+
+        .. math::
+
+            \\langle 0 | U^\dagger A_l V | 0 \\rangle \\langle V^\dagger A_m^\dagger U | 0 \\rangle
+
+        Args:
+            operators (List[QuantumCircuit]): List of quantum circuits representing the operators [U, A_l, A_m].
+            use_barrier (Optional[bool], optional): introduce barriers in the description of the circuits.  Defaults to False.
+            apply_initial_state (Optional[QuantumCircuit], optional): Quantum Circuit to create |Psi> from |0>. If None, assume that the qubits of the firsr register are alredy in Psi.
+            apply_measurement (Optional[bool], optional): apply explicit measurement. Defaults to False.
+
+        Returns:
+            List[QuantumCircuit]: List of quamtum circuits required to compute the Hadammard Test.
+        """
+
+        self.operator_num_qubits = operators[0].num_qubits 
+        self.num_qubits = 2*operators[0].num_qubits + 1
+        if apply_initial_state is not None:
+            if apply_initial_state.num_qubits != operators[0].num_qubits:
+                raise ValueError(
+                    "The operator and the initial state circuits have different numbers of qubits"
+                )
+
+
+        # classical bit for explicit measurement
+        self.num_clbits = self.num_qubits
+
+        # build the circuits
+        self.circuits = self._build_circuit(
+            operators,
+            use_barrier,
+            apply_initial_state,
+            apply_measurement,
+        )
+
+        # number of circuits required
+        self.ncircuits = len(self.circuits)
+
+        # post processing coefficients
+        self.post_process_coeffs = self.compute_post_processing_coefficients()
+
+        # var for iterator
+        self.iiter = None
+
+    def _build_circuit(
+        self,
+        operators: List[QuantumCircuit],
+        use_barrier: bool,
+        apply_initial_state: Optional[QuantumCircuit] = None,
+        apply_measurement: Optional[bool] = False,
+    ) -> List[QuantumCircuit]:
+        """build the quantum circuits
+
+        Args:
+            operators (List[QuantumCircuit]): quantum circuit or list of quantum circuits representing the [U, Al, Am].
+            use_barrier (bool): introduce barriers in the description of the circuits.
+            apply_initial_state (Optional[QuantumCircuit], optional): Quantum Circuit to create |Psi> from |0>. If None, assume that the qubits are alredy in Psi.  Defaults to None.
+            apply_measurement (Optional[bool], optional): apply explicit measurement. Defaults to False.
+
+        Returns:
+            List[QuantumCircuit]: List of quamtum circuits required to compute the Hadammard Test.
+        """
+
+        circuits = []
+        U, Al, Am = operators
+
+        for imaginary in [False, True]:
+
+            qctrl = QuantumRegister(1, 'qctrl')
+            qreg0 = QuantumRegister(Al.num_qubits, 'qr0')
+            qreg1 = QuantumRegister(Am.num_qubits, 'qr1')
+            qc = QuantumCircuit(qctrl, qreg0, qreg1)
+
+            # hadadmard gate on ctrl qbit
+            qc.h(qctrl)
+
+            # prepare psi on the first register
+            if apply_initial_state is not None:
+                qc.compose(
+                    apply_initial_state, qreg0, inplace=True
+                )
+
+            # apply U on the second register
+            qc.compose(U, qreg1, inplace=True)
+
+            if use_barrier:
+                qc.barrier()
+
+            # apply Al on the first qreg
+            idx = [0] + list(range(1,Al.num_qubits+1))
+            qc.compose(Al.control(1), idx, inplace=True)
+
+            # apply Am^\dagger on the second reg
+            idx = [0] + list(range(Al.num_qubits+1,2*Al.num_qubits+1))
+            qc.compose(Am.inverse().control(1), idx, inplace=True)
+
+            if use_barrier:
+                qc.barrier()
+
+            # apply the cnot gate
+            for q0, q1 in zip(qreg0, qreg1):
+                qc.cx(q0,q1)
+            
+            # Sdg on ctrl qbit
+            if imaginary:
+                qc.rz(-np.pi/2, qctrl)
+
+            if use_barrier:
+                qc.barrier()
+
+            # hadamard on ctrl circuit
+            qc.h(qctrl)
+            for q0 in qreg0:
+                qc.h(q0) 
+
+            # measure
+            if apply_measurement:
+                qc.measure_all(inplace=True)
+                
+            circuits.append(qc)
+
+        return circuits
+
+    def compute_post_processing_coefficients(self):
+        """Compute the coefficients for the postprocessing 
+        """
+
+        # compute [1,1,1,-1] \otimes n
+        # these are the coefficients if the qubits of register A and B
+        # are ordered as A0 B0 A1 B1 .... AN BN
+        c0 = np.array([1,1,1,-1])
+        coeffs = np.array([1,1,1,-1])
+        for _ in range(1,self.operator_num_qubits):
+            coeffs = np.tensordot(coeffs, c0, axes=0).flatten()
+
+
+        # create all the possible bit strings of a single register
+        bit_strings = []
+        for i in range(2**(self.operator_num_qubits)):
+            bit_strings.append( f"{i:b}".zfill(self.operator_num_qubits) )
+
+        # coeff in the A0 A1 .. AN B0 B1 ... BN
+        reordered_coeffs = np.zeros_like(coeffs)
+
+        # Reorder the coefficients from 
+        # A0 B0 A1 B1 ... AN BN => A0 A1 .. AN B0 B1 ... BN
+        for bs1 in bit_strings:
+            for bs2 in bit_strings:
+                idx = int(bs1+bs2, 2)
+                new_bit_string = ''.join([i+j for i,j in zip(bs1, bs2)])
+                idx_ori = int(new_bit_string,2)
+                reordered_coeffs[idx] = coeffs[idx_ori]
+
+        return reordered_coeffs 
+
+    def construct_expectation(self, parameter: Union[List[float], List[Parameter], np.ndarray, None] = None):
+        r"""
+        Generate the ansatz circuit and expectation value measurement, and return their
+        runnable composition.
+
+        Args:
+            parameter: Parameters for the ansatz circuit.
+        
+        Returns:
+            The Operator equalling the measurement of the circuit :class:`StateFn` by the
+            observable's expectation :class:`StateFn`
+        """
+
+        exp_val = []
+
+        for circ in self.circuits:
+            if parameter is not None:
+                exp_val.append(StateFn(circ.assign_parameters(parameter)))
+            else:
+                exp_val.append( StateFn(circ))
+
+        self.expect_ops = ListOp(exp_val)
+
+    def get_value(self, circuit_sampler, param_binding: dict) -> List:
+
+        def post_processing(exp_val) -> float:
+            exp_val = (exp_val.to_matrix()[0])
+            exp_val = (exp_val * exp_val.conj())
+            
+            p0 = (exp_val[0::2] * self.post_process_coeffs).sum()
+            p1 = (exp_val[1::2] * self.post_process_coeffs).sum()
+
+            return p0 - p1
+
+        out = []
+        for op in self.expect_ops:
+            sampled_val = circuit_sampler.convert(op, params=param_binding).eval()
+            out.append(post_processing(sampled_val))
+
+        out = np.array(out).astype('complex128')
+        out *= np.array([1.0, 1.0j])
+
+        return out.sum()
+# Variational Quantum Linear Solver
+# Ref :
+# Tutorial :
+
+
+"""Variational Quantum Linear Solver
+
+See https://arxiv.org/abs/1909.05820
+"""
+
+
+
+from typing import Optional, Union, List, Callable, Tuple
+import numpy as np
+import itertools
+
+from qiskit.circuit.library.n_local.real_amplitudes import RealAmplitudes
+from qiskit import Aer
+from qiskit import QuantumCircuit
+from qiskit.circuit import Parameter
+
+
+from qiskit.algorithms.variational_algorithm import VariationalAlgorithm
+
+
+from qiskit.providers import Backend
+from qiskit.quantum_info.operators.base_operator import BaseOperator
+from qiskit.utils import QuantumInstance
+from qiskit.utils.backend_utils import is_aer_provider, is_statevector_backend
+from qiskit.utils.validation import validate_min
+
+# from qiskit.algorithms.linear_solvers.observables.linear_system_observable import (
+#     LinearSystemObservable,
+# )
+
+from qiskit.algorithms.minimum_eigen_solvers.vqe import (
+    _validate_bounds,
+    _validate_initial_point,
+)
+
+from qiskit.opflow import (
+    Z,
+    I,
+    StateFn,
+    OperatorBase,
+    TensoredOp,
+    ExpectationBase,
+    CircuitSampler,
+    ListOp,
+    ExpectationFactory,
+)
+
+from qiskit.opflow.state_fns.sparse_vector_state_fn import SparseVectorStateFn
+
+from qiskit.algorithms.optimizers import SLSQP, Minimizer, Optimizer
+from qiskit.opflow.gradients import GradientBase
+
+
+from qalcore.qiskit.vqls.variational_linear_solver import (
+    VariationalLinearSolver,
+    VariationalLinearSolverResult,
+)
+from qalcore.qiskit.vqls.numpy_unitary_matrices import UnitaryDecomposition
+from qalcore.qiskit.vqls.hadamard_test import HadammardTest, HadammardOverlapTest
+
+from dataclasses import dataclass
+
+@dataclass
+class VQLSLog:
+    values: List
+    parameters: List 
+    def update(self, count, cost, parameters):
+        self.values.append(cost)
+        self.parameters.append(parameters)
+        print(f"VQLS Iteration {count} Cost {cost}", end="\r", flush=True)
 
 class VQLS(VariationalAlgorithm, VariationalLinearSolver):
     r"""Systems of linear equations arise naturally in many real-life applications in a wide range
@@ -863,11 +1191,12 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         initial_point: Optional[np.ndarray] = None,
         gradient: Optional[Union[GradientBase, Callable]] = None,
         expectation: Optional[ExpectationBase] = None,
-        include_custom: bool = False,
-        max_evals_grouped: int = 1,
+        include_custom: Optional[bool] = False,
+        max_evals_grouped: Optional[int] = 1,
         callback: Optional[Callable[[int, np.ndarray, float, float], None]] = None,
         quantum_instance: Optional[Union[Backend, QuantumInstance]] = None,
-        use_local_cost: Optional[bool] = False,
+        use_overlap_test: Optional[bool] = False,
+        use_local_cost_function: Optional[bool] = False,
     ) -> None:
         r"""
         Args:
@@ -902,6 +1231,8 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                 by the optimizer for its current set of parameters as it works towards the minimum.
                 These are: the evaluation count, the cost and the optimizer parameters for the ansatz
             quantum_instance: Quantum Instance or Backend
+            use_overlap_test: Use Hadamard overlap test to compute the cost function
+            use_local_cost_function: use the local cost function and not the global one
         """
         super().__init__()
 
@@ -939,7 +1270,20 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
         self._eval_count = 0
 
-        self._use_local_cost = use_local_cost
+        self.vector_circuit = None
+        self.matrix_circuits = None
+        self.num_hdr = None
+        self.observable = None
+
+        self._use_overlap_test = None 
+        self.use_overlap_test = use_overlap_test
+
+        self._use_local_cost_function = None
+        self.use_local_cost_function = use_local_cost_function
+        
+
+        if use_local_cost_function and use_overlap_test:
+            raise ValueError("Hadammard Overlap Tests not supported with local cost function")
 
     @property
     def num_qubits(self) -> int:
@@ -1056,14 +1400,24 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         self._optimizer = optimizer
 
     @property
-    def use_local_cost(self) -> bool:
-        """Returns initial point"""
-        return self._use_local_cost
+    def use_overlap_test(self) -> bool:
+        """return the choice for overlap hadammard test"""
+        return self._use_overlap_test
 
-    @use_local_cost.setter
-    def use_local_cost(self, use_local_cost: bool):
-        """Sets initial point"""
-        self._use_local_cost = use_local_cost
+    @use_overlap_test.setter
+    def use_overlap_test(self, use_overlap_test: bool) -> None:
+        """Set the choice for using overlap hadammard test"""
+        self._use_overlap_test = use_overlap_test
+
+    @property
+    def use_local_cost_function(self) -> bool:
+        """return type of cost function"""
+        return self._use_local_cost_function
+
+    @use_local_cost_function.setter
+    def use_local_cost_function(self, use_local_cost_function: bool) -> None:
+        """Set the type of cost function"""
+        self._use_local_cost_function = use_local_cost_function
 
     def construct_circuit(
         self,
@@ -1093,12 +1447,24 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
             self.vector_circuit = vector
 
         elif isinstance(vector, np.ndarray):
+
+            # ensure the vector is double
+            vector = vector.astype("float64")
+
+            # create the circuit
             nb = int(np.log2(len(vector)))
             self.vector_circuit = QuantumCircuit(nb)
-            self.vector_circuit.prepare_state(vector / np.linalg.norm(vector))
+
+            # prep the vector if its norm is non nul
+            vec_norm = np.linalg.norm(vector)
+            if vec_norm != 0:
+                self.vector_circuit.prepare_state(vector / vec_norm)
 
         # general numpy matrix
         if isinstance(matrix, np.ndarray):
+
+            # ensure the matrix is double
+            matrix = matrix.astype("float64")
 
             if matrix.shape[0] != 2**self.vector_circuit.num_qubits:
                 raise ValueError(
@@ -1116,7 +1482,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                 raise ValueError(
                     "Matrix and vector circuits have different numbers of qubits."
                 )
-            self.matrix_circuits = UnitaryDecomposition(circuit=matrix)
+            self.matrix_circuits = UnitaryDecomposition(circuits=matrix)
 
         elif isinstance(matrix, List):
             assert isinstance(matrix[0][0], (float, complex))
@@ -1128,27 +1494,102 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         else:
             raise ValueError("Format of the input matrix not recognized")
 
-        circuits = []
-        self.num_hdmr = 0
-
-        # compute only the circuit for <0|V A_n ^* A_m V|0>
+        # create only the circuit for <psi|psi> =  <0|V A_n ^* A_m V|0>
         # with n != m as the diagonal terms (n==m) always give a proba of 1.0
+        hdmr_tests_norm = self._get_norm_circuits(appply_explicit_measurement)
+        
+        # create the circuits for <b|psi> 
+        # local cost function
+        if self._use_local_cost_function:
+            hdmr_tests_overlap = self._get_local_circuits(appply_explicit_measurement)
+        # global cost function 
+        else:
+            hdmr_tests_overlap = self._get_global_circuits(appply_explicit_measurement)
+
+        return hdmr_tests_norm, hdmr_tests_overlap
+
+    def _get_norm_circuits(self, appply_explicit_measurement: bool) -> List[QuantumCircuit]:
+        """_summary_
+
+        Raises:
+            RuntimeError: _description_
+
+        Returns:
+            List[QuantumCircuit]: _description_
+        """
+
+        hdmr_tests_norm = []
+
         for ii in range(len(self.matrix_circuits)):
             mi = self.matrix_circuits[ii]
 
             for jj in range(ii + 1, len(self.matrix_circuits)):
                 mj = self.matrix_circuits[jj]
-                circuits += HadammardTest(
+                hdmr_tests_norm.append( HadammardTest(
                     operators=[mi.circuit.inverse(), mj.circuit],
                     apply_initial_state=self._ansatz,
                     apply_measurement=appply_explicit_measurement,
+                    )
                 )
+        return hdmr_tests_norm
 
-                self.num_hdmr += 1
+    def _get_local_circuits(self, appply_explicit_measurement: bool) -> List[QuantumCircuit]:
+        """_summary_
 
-        if self._use_local_cost:
+        Args:
+            appply_explicit_measurement (bool): _description_
 
-            zero_op = (I - Z) / 2
+        Returns:
+            List[QuantumCircuit]: _description_
+        """
+
+        hdmr_tests_overlap = []
+        num_z = self.matrix_circuits[0].circuit.num_qubits
+
+        # create the circuits for <0| U^* A_l V(Zj . Ij|) V^* Am^* U|0>
+        for ii in range(len(self.matrix_circuits)):
+            mi = self.matrix_circuits[ii]
+
+            for jj in range(ii, len(self.matrix_circuits)):
+                mj = self.matrix_circuits[jj]
+
+                for iq in range(num_z):
+
+                    # circuit for the CZ operation on the iqth qubit
+                    qc_z = QuantumCircuit(num_z+1)
+                    qc_z.cz(0, iq+1)
+
+                    # create Hadammard circuit
+                    hdmr_tests_overlap.append(HadammardTest(
+                        operators = [mi.circuit,
+                                    self.vector_circuit.inverse(),
+                                    qc_z,
+                                    self.vector_circuit,
+                                    mj.circuit.inverse()],
+                        apply_control_to_operator=[True, True, False, True, True],
+                        apply_initial_state = self.ansatz,
+                        apply_measurement = appply_explicit_measurement 
+                        )
+                    )
+        return hdmr_tests_overlap
+
+    def _get_global_circuits(self, appply_explicit_measurement: bool) -> List[QuantumCircuit]:
+        """_summary_
+
+        Args:
+            appply_explicit_measurement (bool): _description_
+
+        Raises:
+            RuntimeError: _description_
+
+        Returns:
+            List[QuantumCircuit]: _description_
+        """
+
+        hdmr_tests_overlap = []
+        # create the circuits for <0|U^* A_l V|0\rangle\langle 0| V^* Am^* U|0>
+        # either using overal test or hadammard test
+        if self._use_overlap_test:
 
             for ii in range(len(self.matrix_circuits)):
                 mi = self.matrix_circuits[ii]
@@ -1156,114 +1597,39 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                 for jj in range(ii, len(self.matrix_circuits)):
                     mj = self.matrix_circuits[jj]
 
-                    for nb in range(self._num_qubits):
-
-                        op = (
-                            TensoredOp([I] * (nb))
-                            ^ zero_op
-                            ^ TensoredOp([I] * (self._num_qubits - 1 - nb))
+                    hdmr_tests_overlap.append(HadammardOverlapTest(
+                        operators = [self.vector_circuit, mi.circuit, mj.circuit],
+                        apply_initial_state = self.ansatz,
+                        apply_measurement = appply_explicit_measurement 
                         )
-
-                        circuits += HadammardTest(
-                            operators=[
-                                mi.circuit.inverse(),
-                                self.vector_circuit,
-                                op,
-                                self.vector_circuit.inverse(),
-                                mj.circuit,
-                            ],
-                            apply_initial_state=self._ansatz,
-                            apply_measurement=appply_explicit_measurement,
-                        )
+                    )
         else:
+            
             for mi in self.matrix_circuits:
-                circuits += HadammardTest(
+                hdmr_tests_overlap.append(HadammardTest(
                     operators=[self.ansatz, mi.circuit, self.vector_circuit.inverse()],
                     apply_measurement=appply_explicit_measurement,
+                    )
                 )
 
-        return circuits
-
-    def construct_observalbe(self):
-        """Create the operator to measure the circuit output."""
-
-        # create thew obsevable
-        one_op = (I - Z) / 2
-        self.observable = TensoredOp((self.num_qubits - 1) * [I]) ^ one_op
-
-    def construct_expectation(
-        self,
-        parameter: Union[List[float], List[Parameter], np.ndarray],
-        circuit: QuantumCircuit,
-    ) -> Union[OperatorBase, Tuple[OperatorBase, ExpectationBase]]:
-        r"""
-        Generate the ansatz circuit and expectation value measurement, and return their
-        runnable composition.
-
-        Args:
-            parameter: Parameters for the ansatz circuit.
-            circuit: one of the circuit required for the cost calculation
-
-        Returns:
-            The Operator equalling the measurement of the circuit :class:`StateFn` by the
-            observable's expectation :class:`StateFn`
-
-        """
-
-        # assign param to circuit
-        wave_function = circuit.assign_parameters(parameter)
-
-        # compose the statefn of the observable on the circuit
-        return ~StateFn(self.observable) @ StateFn(wave_function)
+        return hdmr_tests_overlap
 
     @staticmethod
-    def get_probability_from_statevector(statevector: List[complex]) -> float:
-        """Transforms the circuit statevector in a probabilty
+    def get_coefficient_matrix(coeffs) -> np.ndarray:
+        """Compute all the vi* vj terms
 
         Args:
-            statevector (List[complex]): circuit state vector
-
-        Returns:
-            float: probability
+            coeffs (np.ndarray): list of complex coefficients
         """
-        sv = statevector[1::2]
-        exp_val = np.real((sv * sv.conj()).sum())
-        return 1.0 - 2.0 * exp_val
+        return coeffs[:,None].conj() @ coeffs[None,:]
 
-    @staticmethod
-    def get_probability_from_expected_value(exp_val: complex) -> float:
-        """Transforms the state array of the circuit into a probability
-
-        Args:
-            exp_val (complex): expected value of the observable
-
-        Returns:
-            float : probability
-        """
-        return 1.0 - 2.0 * exp_val
-
-    def get_hadamard_sum_coeffcients(self) -> Tuple:
-        """Compute the c_i^*c_i and  c_i^*c_j coefficients.
-
-        Returns:
-            tuple: c_ii coefficients and c_ij coefficients
-        """
-
-        # compute all the ci.conj * cj  for i<j
-        cii_coeffs, cij_coeffs = [], []
-        for ii in range(len(self.matrix_circuits)):
-            ci = self.matrix_circuits[ii].coeff
-            cii_coeffs.append(ci.conj() * ci)
-            for jj in range(ii + 1, len(self.matrix_circuits)):
-                cj = self.matrix_circuits[jj].coeff
-                cij_coeffs.append(ci.conj() * cj)
-
-        return np.array(cii_coeffs), np.array(cij_coeffs)
-
-    def process_probability_circuit_output(
-        self, probabiliy_circuit_output: List
+    def _assemble_cost_function(
+        self, 
+        hdmr_values_norm: np.ndarray,
+        hdmr_values_overlap: np.ndarray,
+        coefficient_matrix: np.ndarray
     ) -> float:
-        """Compute the final cost function from the output of the different circuits
+        r"""Compute the final cost function from the output of the different circuits
 
         Args:
             probabiliy_circuit_output (List): expected values of the different circuits
@@ -1272,110 +1638,163 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
             float: value of the cost function
         """
 
-        # compute all the ci.conj * cj  for i<j
-        cii_coeffs, cij_coeffs = self.get_hadamard_sum_coeffcients()
-
         # compute all the terms in <\phi|\phi> = \sum c_i* cj <0|V Ai* Aj V|0>
-        phi_phi_overlap = self._compute_phi_overlap(
-            cii_coeffs, cij_coeffs, probabiliy_circuit_output
+        norm = self._compute_normalization_term(
+            coefficient_matrix, hdmr_values_norm
         )
 
-        # compute all the terms in |<b|\phi>|^2 = \sum c_i* cj <0|U* Ai V|0><0|V* Aj* U|0>
-        b_phi_overlap = self._compute_bphi_overlap(
-            cii_coeffs, cij_coeffs, probabiliy_circuit_output
-        )
+        if self._use_local_cost_function:
+            # compute all terms in 
+            # \sum c_i* c_j 1/n \sum_n <0|V* Ai U Zn U* Aj* V|0>
+            sum_terms = self._compute_local_terms(
+                coefficient_matrix, hdmr_values_overlap, norm
+            )
+
+        else:
+            # compute all the terms in 
+            # |<b|\phi>|^2 = \sum c_i* cj <0|U* Ai V|0><0|V* Aj* U|0>
+            sum_terms = self._compute_global_terms(
+                coefficient_matrix, hdmr_values_overlap
+            )
 
         # overall cost
-        cost = 1.0 - np.real(b_phi_overlap / phi_phi_overlap)
-        print("Cost function %f" % cost)
+        cost = 1.0 - np.real(sum_terms / norm)
+
+        # print("Cost function %f" % cost)
         return cost
 
-    def _compute_phi_overlap(
+    def _compute_normalization_term(
         self,
-        cii_coeff: np.ndarray,
-        cij_coeff: np.ndarray,
-        probabiliy_circuit_output: List,
+        coeff_matrix: np.ndarray,
+        hdmr_values: np.ndarray,
     ) -> float:
-        """Compute the state overlap
+        r"""Compute <phi|phi>
 
-        .. math:
-            \langle\Phi|\Phi\rangle = \sum_{nm} c_n^*c_m \langle 0|V^* U_n^* U_m V|0\rangle
+        .. math::
+            \\langle\\Phi|\\Phi\\rangle = \\sum_{nm} c_n^*c_m \\langle 0|V^* U_n^* U_m V|0\\rangle
 
         Args:
-            sum_coeff (List): the values of the c_n^* c_m coefficients
-            probabiliy_circuit_output (List): the values of the \langle 0|V^* U_n^* U_m V|0\rangle terms
+            coeff_matrix (List): the matrix values of the c_n^* c_m coefficients
+            hdmr_values (List): the values of the circuits output
 
         Returns:
             float: value of the sum
         """
 
         # compute all the terms in <\phi|\phi> = \sum c_i* cj <0|V Ai* Aj V|0>
-        phi_phi_overlap = np.array(probabiliy_circuit_output)[: 2 * self.num_hdmr]
-        if phi_phi_overlap.dtype != "complex128":
-            phi_phi_overlap = phi_phi_overlap.astype("complex128")
-        phi_phi_overlap *= np.array([1.0, 1.0j] * self.num_hdmr)
-        phi_phi_overlap = phi_phi_overlap.reshape(-1, 2).sum(1)
+        # hdrm_values here contains the values of the <0|V Ai* Aj V|0>  with j>i
+        out = hdmr_values
 
-        phi_phi_overlap *= cij_coeff
-        phi_phi_overlap = phi_phi_overlap.sum()
-        phi_phi_overlap += phi_phi_overlap.conj()
+        # we multiuply hdmrval by the triup coeff matrix and sum
+        out *= coeff_matrix[np.triu_indices_from(coeff_matrix, k=1)]
+        out = out.sum()
+
+        # add the conj that corresponds to the tri down matrix
+        out += out.conj()
 
         # add the diagonal terms
         # since <0|V Ai* Aj V|0> = 1 we simply
         # add the sum of the cici coeffs
-        phi_phi_overlap += cii_coeff.sum()
+        out += np.trace(coeff_matrix)
 
-        return phi_phi_overlap
+        return out
 
-    def _compute_bphi_overlap(
+    def _compute_global_terms(
         self,
-        cii_coeffs: np.ndarray,
-        cij_coeffs: np.ndarray,
-        probabiliy_circuit_output: List,
+        coeff_matrix: np.ndarray,
+        hdmr_values: np.ndarray,
     ) -> float:
-        """Compute the overlap
+        """Compute |<b|phi>|^2
 
-        .. math:
-            |\langle\b|\Phi\rangle|^2 = \sum_{nm} c_n^*c_m \langle 0|V^* U_n^* U_b |0\rangle \langle 0|U_b^* U_m V |0\rangle
+        .. math::
+            |\\langle b|\\Phi\\rangle|^2 = \\sum_{nm} c_n^*c_m \\langle 0|V^* U_n^* U_b |0 \\rangle \\langle 0|U_b^* U_m V |0\\rangle
 
         Args:
-            cii_coeffs (List): the values of the c_i^* c_i coeffcients
-            cij_coeffs (List): the values of the c_i^* c_j coeffcients
-            probabiliy_circuit_output (List): values of the \langle 0|V^* U_n^* U_b |0\rangle terms
+            coeff_matrix (np.ndarray): the matrix values of the c_n^* c_m coefficients
+            hdmr_values (List): values of the circuit outputs
 
         Returns:
             float: value of the sum
         """
 
-        # compute <0|V* Ai* U|0> = p[k] + 1.0j p[k+1]
-        # with k = 2*(self.num_hdmr + i)
-        bphi_terms = np.array(probabiliy_circuit_output)[2 * self.num_hdmr :]
-        if bphi_terms.dtype != "complex128":
-            bphi_terms = bphi_terms.astype("complex128")
-        bphi_terms *= np.array([1.0, 1.0j] * int(len(bphi_terms) / 2))
-        bphi_terms = bphi_terms.reshape(-1, 2).sum(1)
+        if self._use_overlap_test:
 
-        # init the final result
-        b_phi_overlap = 0.0 + 0.0j
-        nterm = len(bphi_terms)
-        iterm = 0
-        for i in range(nterm):
-            # add |c_i|^2 <0|V* Ai* U|0> * <0|U* Ai V|0>
-            xii = cii_coeffs[i] * bphi_terms[i] * bphi_terms[i].conj()
-            b_phi_overlap += xii
-            for j in range(i + 1, nterm):
-                # add c_i* c_j <0|V* Ai* U|0> * <0|U* Aj V|0>
-                xij = cij_coeffs[iterm] * bphi_terms[i] * bphi_terms[j].conj()
-                b_phi_overlap += xij
-                # add c_j* c_i <0|V* Aj* U|0> * <0|U* Ai V|0>
-                b_phi_overlap += xij.conj()
-                iterm += 1
+            # hdmr_values here contains the values of <0|V* Ai* U|0><0|V Aj U|0> for j>=i
+            # we first insert these values in a tri up matrix
+            size = len(self.matrix_circuits)
+            hdmr_matrix = np.zeros((size,size)).astype('complex128')
+            hdmr_matrix[np.tril_indices(size)] = hdmr_values
 
-        return b_phi_overlap
+            # add the conj that correspond to the tri low part of the matrix
+            # warning the diagonal is also contained in out and we only
+            # want to add the conj of the tri up excluding the diag
+            hdmr_matrix[np.triu_indices_from(hdmr_matrix, k=1)] = hdmr_matrix[np.tril_indices_from(hdmr_matrix, k=-1)].conj()
+
+            # multiply by the coefficent matrix and sum the values
+            out_matrix = coeff_matrix * hdmr_matrix
+            out = out_matrix.sum() 
+                    
+        else:
+            # hdmr_values here contains the values of <0|V* Ai* U|0>
+            # compute the matrix of the <0|V* Ai* U|0> <0|V Aj U*|0> values
+            hdmr_matrix = self.get_coefficient_matrix(hdmr_values)
+            out = (coeff_matrix * hdmr_matrix).sum()
+
+        return out
+
+    def _compute_local_terms(
+        self,
+        coeff_matrix: np.ndarray,
+        hdmr_values: np.ndarray,
+        norm: float
+    ) -> float:
+        """Compute the term of the local cost function given by
+
+        .. math::
+            \\sum c_i^* c_j \\frac{1}{n} \\sum_n \\langle 0|V^* A_i U Z_n U^* A_j^* V|0\\rangle
+
+        Args:
+            coeff_matrix (np.ndarray): the matrix values of the c_n^* c_m coefficients
+            hdmr_values (List): values of the circuit outputs
+
+        Returns:
+            float: value of the sum
+        """
+        
+        # add all the hadamard test values corresponding to the insertion of Z gates on the same cicuit
+        # b_ij = \sum_n \\frac{1}{n} \\sum_n \\langle 0|V^* A_i U Z_n U^* A_j^* V|0\\rangle
+        num_zgate = self.matrix_circuits[0].circuit.num_qubits
+        hdmr_values = hdmr_values.reshape(-1, num_zgate).mean(1)
+
+        # hdmr_values then contains the values of <0|V* Ai* U|0><0|V Aj U|0> for j>=i
+        # we first insert these values in a tri up matrix
+        size = len(self.matrix_circuits)
+        hdmr_matrix = np.zeros((size,size)).astype('complex128')
+        hdmr_matrix[np.triu_indices(size)] = hdmr_values
+
+        # add the conj that correspond to the tri low part of the matrix
+        # warning the diagonal is also contained in out and we only
+        # want to add the conj of the tri up excluding the diag        
+        hdmr_matrix[np.tril_indices_from(hdmr_matrix, k=-1)] = hdmr_matrix[np.triu_indices_from(hdmr_matrix, k=1)].conj()
+
+        
+        # multiply by the coefficent matrix and sum the values
+        out_matrix = coeff_matrix * hdmr_matrix
+        out = (out_matrix).sum()
+
+        # add \sum c_i* cj <0|V Ai* Aj V|0>
+        out += norm
+
+        # factor two coming from |0><0| = 1/2(I+Z)
+        out /= 2
+
+        return out
 
     def get_cost_evaluation_function(
         self,
-        circuits: List[QuantumCircuit],
+        hdmr_tests_norm: List, 
+        hdmr_tests_overlap: List,
+        coefficient_matrix: np.ndarray,
     ) -> Callable[[np.ndarray], Union[float, List[float]]]:
         """Generate the cost function of the minimazation process
 
@@ -1395,16 +1814,14 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                 "The ansatz must be parameterized, but has 0 free parameters."
             )
 
-        # construct the observable op
-        self.construct_observalbe()
-
+    
         ansatz_params = self.ansatz.parameters
-        expect_ops = []
-        for circ in circuits:
-            expect_ops.append(self.construct_expectation(ansatz_params, circ))
+        for hdmr in hdmr_tests_norm:
+            hdmr.construct_expectation(ansatz_params)
 
-        # create a ListOp for performance purposes
-        expect_ops = ListOp(expect_ops)
+        for hdmr in hdmr_tests_overlap:
+            hdmr.construct_expectation(ansatz_params)
+
 
         def cost_evaluation(parameters):
 
@@ -1414,29 +1831,25 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                 zip(ansatz_params, parameter_sets.transpose().tolist())
             )
 
-            # TODO define a multiple sampler, one for each ops, to leverage caching
             # get the sampled output
-            out = []
-            for op in expect_ops:
-                sampled_expect_op = self._circuit_sampler.convert(
-                    op, params=param_bindings
-                )
-                out.append(
-                    self.get_probability_from_expected_value(
-                        sampled_expect_op.eval()[0]
-                    )
-                )
+            hdmr_values_norm = np.array([hdrm.get_value(self._circuit_sampler, param_bindings) 
+                                                                for hdrm in hdmr_tests_norm])
+            hdmr_values_overlap = np.array([hdrm.get_value(self._circuit_sampler, param_bindings) 
+                                                                for hdrm in hdmr_tests_overlap])
 
             # compute the total cost
-            cost = self.process_probability_circuit_output(out)
+            cost = self._assemble_cost_function(hdmr_values_norm, 
+                                                hdmr_values_overlap, 
+                                                coefficient_matrix)
 
-            # get the internediate results if required
+            # get the intermediate results if required
             if self._callback is not None:
                 for param_set in parameter_sets:
                     self._eval_count += 1
                     self._callback(self._eval_count, cost, param_set)
             else:
                 self._eval_count += 1
+                print(f"VQLS Iteration {self._eval_count} Cost {cost}", end="\r", flush=True) 
 
             return cost
 
@@ -1445,7 +1858,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
     def _calculate_observable(
         self,
         solution: QuantumCircuit,
-        observable: Optional[Union[LinearSystemObservable, BaseOperator]] = None,
+        observable: Optional[BaseOperator] = None,
         observable_circuit: Optional[QuantumCircuit] = None,
         post_processing: Optional[
             Callable[[Union[float, List[float]]], Union[float, List[float]]]
@@ -1474,9 +1887,6 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         if observable is not None:
             observable_circuit = observable.observable_circuit(nb)
             post_processing = observable.post_processing
-
-            if isinstance(observable, LinearSystemObservable):
-                observable = observable.observable(nb)
 
         is_list = True
         if not isinstance(observable_circuit, list):
@@ -1517,7 +1927,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         expectation_results = expectations.eval()
 
         # apply post_processing
-        result = post_processing(expectation_results, nb, self.scaling)
+        result = post_processing(expectation_results, nb)
 
         return result, expectation_results
 
@@ -1527,9 +1937,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         vector: Union[np.ndarray, QuantumCircuit],
         observable: Optional[
             Union[
-                LinearSystemObservable,
                 BaseOperator,
-                List[LinearSystemObservable],
                 List[BaseOperator],
             ]
         ] = None,
@@ -1560,8 +1968,11 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
             VariationalLinearSolverResult: Result of the optimization and solution vector of the linear system
         """
 
-        # compute the circuits
-        circuits = self.construct_circuit(matrix, vector)
+        # compute the circuits needed for the hadamard tests
+        hdmr_tests_norm, hdmr_tests_overlap = self.construct_circuit(matrix, vector)
+
+        # compute he coefficient matrix 
+        coefficient_matrix = self.get_coefficient_matrix(np.array([mi.coeff for mi in self.matrix_circuits]))
 
         # set an expectation for this algorithm run (will be reset to None at the end)
         initial_point = _validate_initial_point(self.initial_point, self.ansatz)
@@ -1570,11 +1981,10 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         # Convert the gradient operator into a callable function that is compatible with the
         # optimization routine.
         gradient = self._gradient
-
         self._eval_count = 0
 
         # get the cost evaluation function
-        cost_evaluation = self.get_cost_evaluation_function(circuits)
+        cost_evaluation = self.get_cost_evaluation_function(hdmr_tests_norm, hdmr_tests_overlap, coefficient_matrix)
 
         if callable(self.optimizer):
             opt_result = self.optimizer(  # pylint: disable=not-callable
@@ -1603,3 +2013,4 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         )
 
         return solution
+

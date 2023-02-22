@@ -336,21 +336,24 @@ class HadammardOverlapTest:
         """
 
         # compute [1,1,1,-1] \otimes n
+        # these are the coefficients if the qubits of register A and B
+        # are ordered as A0 B0 A1 B1 .... AN BN
         c0 = np.array([1,1,1,-1])
         coeffs = np.array([1,1,1,-1])
         for _ in range(1,self.operator_num_qubits):
             coeffs = np.tensordot(coeffs, c0, axes=0).flatten()
 
 
-        # create the reordering index to map
-        # A0 A1 .. AN B0 B1 ... BN => A0 B0 A1 B1 ... AN BN
+        # create all the possible bit strings of a single register
         bit_strings = []
         for i in range(2**(self.operator_num_qubits)):
             bit_strings.append( f"{i:b}".zfill(self.operator_num_qubits) )
 
-
+        # coeff in the A0 A1 .. AN B0 B1 ... BN
         reordered_coeffs = np.zeros_like(coeffs)
 
+        # Reorder the coefficients from 
+        # A0 B0 A1 B1 ... AN BN => A0 A1 .. AN B0 B1 ... BN
         for bs1 in bit_strings:
             for bs2 in bit_strings:
                 idx = int(bs1+bs2, 2)
