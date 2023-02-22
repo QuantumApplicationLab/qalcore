@@ -20,14 +20,14 @@ from qiskit import QuantumCircuit
 
 from qiskit.quantum_info.operators.base_operator import BaseOperator
 
-from qiskit.algorithms.linear_solvers.observables.linear_system_observable import (
-    LinearSystemObservable,
-)
+# from qiskit.algorithms.linear_solvers.observables.linear_system_observable import (
+#     LinearSystemObservable,
+# )
 from qiskit.algorithms.variational_algorithm import VariationalResult
-from qiskit.algorithms.linear_solvers.linear_solver import LinearSolverResult
+# from qiskit.algorithms.linear_solvers.linear_solver import LinearSolverResult
 
 
-class VariationalLinearSolverResult(LinearSolverResult, VariationalResult):
+class VariationalLinearSolverResult(VariationalResult):
     """A base class for linear systems results using variational methods
 
     The  linear systems variational algorithms return an object of the type ``VariationalLinearSystemsResult``
@@ -72,9 +72,7 @@ class VariationalLinearSolver(ABC):
         vector: Union[np.ndarray, QuantumCircuit],
         observable: Optional[
             Union[
-                LinearSystemObservable,
                 BaseOperator,
-                List[LinearSystemObservable],
                 List[BaseOperator],
             ]
         ] = None,
