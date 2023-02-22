@@ -3,6 +3,7 @@
 from typing import Optional, List, Union
 from qiskit import QuantumCircuit, QuantumRegister
 from qiskit.opflow import Z, I, TensoredOp, StateFn, ListOp
+from qiskit.quantum_info import SparsePauliOp
 from qiskit.circuit import Parameter
 import numpy as np 
 
@@ -153,47 +154,28 @@ class HadammardTest:
             Lis[TensoredOp]: List of two observables to measure |1> on the control qubit I^...^I^|1><1|
         """
 
-        one_op = (I - Z) / 2
-        one_op_ctrl = TensoredOp((self.num_qubits - 1) * [I]) ^ one_op
+        # one_op = (I - Z) / 2
+        # one_op_ctrl = TensoredOp((self.num_qubits - 1) * [I]) ^ one_op
+        self.num_qubits
+        p0 = "I" * self.num_qubits
+        p1 = "I" * (self.num_qubits-1) + "Z"
+        one_op_ctrl = SparsePauliOp([p0,p1], np.array([0.5, -0.5]))
         return one_op_ctrl
 
-    def construct_expectation(self, parameter: Union[List[float], List[Parameter], np.ndarray, None] = None):
-        r"""
-        Generate the ansatz circuit and expectation value measurement, and return their
-        runnable composition.
+    def get_value(self, estimator, parameter_sets: List) -> List:
 
-        Args:
-            parameter: Parameters for the ansatz circuit.
-        
-        Returns:
-            The Operator equalling the measurement of the circuit :class:`StateFn` by the
-            observable's expectation :class:`StateFn`
-        """
+        def post_processing(estimator_result) -> List:
+            return [1.0 - 2.0 * val for val in estimator_result.values]
 
-        exp_val = []
+        ncircuits = len(self.circuits)
 
-        for circ in self.circuits:
-            if parameter is not None:
-                exp_val.append(~StateFn(self.observable) @ StateFn(circ.assign_parameters(parameter)))
-            else:
-                exp_val.append(~StateFn(self.observable) @ StateFn(circ))
+        job = estimator.run(self.circuits, [self.observable]*ncircuits, [parameter_sets]*ncircuits)
+        results = post_processing(job.result())
 
-        self.expect_ops = ListOp(exp_val)
+        results = np.array(results).astype('complex128')
+        results *= np.array([1.0, 1.0j])
 
-    def get_value(self, circuit_sampler, param_binding: dict) -> List:
-
-        def post_processing(exp_val) -> float:
-            return 1.0 - 2.0 * exp_val[0]
-
-        out = []
-        for op in self.expect_ops:
-            sampled_val = circuit_sampler.convert(op, params=param_binding).eval()
-            out.append(post_processing(sampled_val))
-
-        out = np.array(out).astype('complex128')
-        out *= np.array([1.0, 1.0j])
-
-        return out.sum()
+        return results.sum()
 
 
 
@@ -205,7 +187,7 @@ class HadammardOverlapTest:
         operators: List[QuantumCircuit],
         use_barrier: Optional[bool] = False,
         apply_initial_state: Optional[QuantumCircuit] = None,
-        apply_measurement: Optional[bool] = False,
+        apply_measurement: Optional[bool] = True,
     ) :
         r"""Create the quantum circuits required to compute the hadamard test:
 
@@ -363,50 +345,34 @@ class HadammardOverlapTest:
 
         return reordered_coeffs 
 
-    def construct_expectation(self, parameter: Union[List[float], List[Parameter], np.ndarray, None] = None):
-        r"""
-        Generate the ansatz circuit and expectation value measurement, and return their
-        runnable composition.
 
-        Args:
-            parameter: Parameters for the ansatz circuit.
-        
-        Returns:
-            The Operator equalling the measurement of the circuit :class:`StateFn` by the
-            observable's expectation :class:`StateFn`
-        """
+    def get_value(self, sampler, parameter_sets: List) -> float:
 
-        exp_val = []
-
-        for circ in self.circuits:
-            if parameter is not None:
-                exp_val.append(StateFn(circ.assign_parameters(parameter)))
-            else:
-                exp_val.append( StateFn(circ))
-
-        self.expect_ops = ListOp(exp_val)
-
-    def get_value(self, circuit_sampler, param_binding: dict) -> List:
-
-        def post_processing(exp_val, isstatevector) -> float:
-            if isstatevector:
-                exp_val = (exp_val.to_matrix()[0])
-            else:
-                exp_val = (exp_val.to_matrix()[0][0])
-
-            exp_val = (exp_val * exp_val.conj())
+        def post_processing(sampler_result) -> List:
             
-            p0 = (exp_val[0::2] * self.post_process_coeffs).sum()
-            p1 = (exp_val[1::2] * self.post_process_coeffs).sum()
+            quasi_dist = sampler_result.quasi_dists
+            output = []
 
-            return p0 - p1
+            for qd in quasi_dist:
+                
+                # add missing keys 
+                val = np.array([qd[k] if k in qd else 0 for k in range(2**self.num_qubits)])
+                val = (val * val.conj())
+            
+                # v0, v1 = np.array_split(val, 2)
+                v0, v1 = val[0::2], val[1::2]
+                p0 = (v0 * self.post_process_coeffs).sum()
+                p1 = (v1 * self.post_process_coeffs).sum()
 
-        out = []
-        for op in self.expect_ops:
-            sampled_val = circuit_sampler.convert(op, params=param_binding).eval()
-            out.append(post_processing(sampled_val, circuit_sampler._statevector))
+                output.append(p0 - p1)
 
-        out = np.array(out).astype('complex128')
-        out *= np.array([1.0, 1.0j])
+            return output
 
-        return out.sum()
+        ncircuits = len(self.circuits)
+        job = sampler.run(self.circuits, [parameter_sets]*ncircuits)
+        results = post_processing(job.result())
+
+        results = np.array(results).astype('complex128')
+        results *= np.array([1.0, 1.0j])
+
+        return results.sum()

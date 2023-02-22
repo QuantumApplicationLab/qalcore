@@ -6,7 +6,7 @@ import numpy as np
 from qiskit.algorithms.linear_solvers.numpy_linear_solver import NumPyLinearSolver
 from qiskit.quantum_info import Statevector
 import matplotlib.pyplot as plt
-
+from qiskit.primitives import Estimator, Sampler 
 
 
 A = np.random.rand(4, 4)
@@ -18,13 +18,16 @@ classical_solution = NumPyLinearSolver().solve(A, b / np.linalg.norm(b))
 
 ansatz = RealAmplitudes(2, entanglement="full", reps=3, insert_barriers=False)
 
+estimator = Estimator()
+sampler = Sampler()
 vqls = VQLS(
-    ansatz=ansatz,
-    optimizer=COBYLA(maxiter=200, disp=True),
-    quantum_instance=Aer.get_backend("aer_simulator_statevector"),
+    estimator,
+    ansatz,
+    COBYLA(maxiter=200, disp=True),
+    sampler=sampler
 )
 
-opt= {"use_overlap_test": False,
+opt= {"use_overlap_test": True,
       "use_local_cost_function": False}
 res = vqls.solve(A, b, opt)
 
