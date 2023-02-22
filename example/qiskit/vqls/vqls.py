@@ -22,12 +22,11 @@ vqls = VQLS(
     ansatz=ansatz,
     optimizer=COBYLA(maxiter=200, disp=True),
     quantum_instance=Aer.get_backend("aer_simulator_statevector"),
-    use_overlap_test=False,
-    use_local_cost_function=True   
 )
 
-
-res = vqls.solve(A, b)
+opt= {"use_overlap_test": False,
+      "use_local_cost_function": False}
+res = vqls.solve(A, b, opt)
 
 
 ref_solution = classical_solution.state / np.linalg.norm(classical_solution.state)
