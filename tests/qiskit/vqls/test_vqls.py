@@ -17,8 +17,6 @@ import unittest
 from qiskit.test import QiskitTestCase
 
 import numpy as np
-from scipy.optimize import minimize as scipy_minimize
-from ddt import data, ddt, idata, unpack
 # from qiskit.algorithms.linear_solvers.numpy_linear_solver import NumPyLinearSolver
 
 from qiskit import BasicAer, QuantumCircuit
@@ -38,7 +36,6 @@ from qalcore.qiskit.vqls import VQLS
 if has_aer():
     from qiskit import Aer
 
-@ddt
 class TestVQLS(QiskitTestCase):
     """Test VQLS"""
 
@@ -47,51 +44,66 @@ class TestVQLS(QiskitTestCase):
         self.seed = 50
         algorithm_globals.random_seed = self.seed
         
-
-        self.qasm_simulator = QuantumInstance(
-            BasicAer.get_backend("qasm_simulator"),
-            shots=1024,
-            seed_simulator=self.seed,
-            seed_transpiler=self.seed,
+        self.options = (
+            {
+                "use_local_cost_function": False,
+                "use_overlap_test": False
+            },
+            {
+                "use_local_cost_function": True,
+                "use_overlap_test": False,
+            },
+            {
+                "use_local_cost_function": False,
+                "use_overlap_test": True
+            },             
         )
 
-        self.statevector_simulator = QuantumInstance(
-            BasicAer.get_backend("statevector_simulator"),
-            shots=1,
-            seed_simulator=self.seed,
-            seed_transpiler=self.seed,
+        self.backends = (
+            QuantumInstance(
+                BasicAer.get_backend("qasm_simulator"),
+                shots=1024,
+                seed_simulator=self.seed,
+                seed_transpiler=self.seed,
+            ),
+
+            QuantumInstance(
+                BasicAer.get_backend("statevector_simulator"),
+                shots=1,
+                seed_simulator=self.seed,
+                seed_transpiler=self.seed,
+            )
         )
 
-    @idata(
-    [
-        [
-            np.array([
-            [0.50, 0.25, 0.10, 0.00],
-            [0.25, 0.50, 0.25, 0.10],
-            [0.10, 0.25, 0.50, 0.25],
-            [0.00, 0.10, 0.25, 0.50] ]),
-            np.array([0.1]*4),
-            RealAmplitudes(num_qubits=2, reps=3, entanglement='full'),
-        ],
-    ])
-    @unpack
-    def test_numpy_input_statevector(self, matrix, rhs, ansatz):
+    def test_numpy_input(self, matrix, rhs, ansatz):
         """Test the VQLS on matrix input using statevector simulator."""
         
+        matrix = np.array([ [0.50, 0.25, 0.10, 0.00],
+                            [0.25, 0.50, 0.25, 0.10],
+                            [0.10, 0.25, 0.50, 0.25],
+                            [0.00, 0.10, 0.25, 0.50] ])
+
+        rhs = np.array([0.1]*4)
+        ansatz = RealAmplitudes(num_qubits=2, reps=3, entanglement='full')
+
         # classical_solution = NumPyLinearSolver().solve(matrix, rhs/np.linalg.norm(rhs))
         
-        vqls = VQLS(
-            ansatz=ansatz,
-            optimizer=COBYLA(maxiter=2, disp=True),
-            quantum_instance=self.statevector_simulator,
-        )
-        res = vqls.solve(matrix, rhs)
+        for qi in self.backends:
+            for opt in self.options:
+                vqls = VQLS(
+                    ansatz=ansatz,
+                    optimizer=COBYLA(maxiter=2, disp=True),
+                    quantum_instance=qi,
+                    use_local_cost_function=opt["use_local_cost_function"],
+                    use_overlap_test=opt["use_overlap_test"]
+                )
+                res = vqls.solve(matrix, rhs)
 
-        # ref_solution = np.abs(classical_solution.state / np.linalg.norm(classical_solution.state))
-        # vqls_solution = np.abs(np.real(Statevector(res.state).data))
-        
-        # with self.subTest(msg="test solution"):
-        #     assert np.allclose(ref_solution, vqls_solution, atol=1E-1, rtol=1E-1)
+                # ref_solution = np.abs(classical_solution.state / np.linalg.norm(classical_solution.state))
+                # vqls_solution = np.abs(np.real(Statevector(res.state).data))
+                
+                # with self.subTest(msg="test solution"):
+                #     assert np.allclose(ref_solution, vqls_solution, atol=1E-1, rtol=1E-1)
 
 
     def test_circuit_input_statevector(self):
@@ -112,7 +124,7 @@ class TestVQLS(QiskitTestCase):
         qc2 = QuantumCircuit(num_qubits)
         qc2.h(0)
         qc2.x(1)
-        qc1.cnot(0,1)
+        qc2.cnot(0,1)
 
         matrix = UnitaryDecomposition(
             circuits = [qc1, qc2],
@@ -123,19 +135,22 @@ class TestVQLS(QiskitTestCase):
         np_rhs = Operator(rhs).data @ np.array([1,0,0,0])
 
         # classical_solution = NumPyLinearSolver().solve(np_matrix, np_rhs/np.linalg.norm(np_rhs))
-        
-        vqls = VQLS(
-            ansatz=ansatz,
-            optimizer=COBYLA(maxiter=2, disp=True),
-            quantum_instance=self.statevector_simulator,
-        )
-        res = vqls.solve([[0.5, qc1], [0.5, qc2]], rhs)
+        for qi in self.backends:
+            for opt in self.options:
+                vqls = VQLS(
+                    ansatz=ansatz,
+                    optimizer=COBYLA(maxiter=2, disp=True),
+                    quantum_instance=qi,
+                    use_local_cost_function=opt["use_local_cost_function"],
+                    use_overlap_test=opt["use_overlap_test"]
+                )
+                res = vqls.solve([[0.5, qc1], [0.5, qc2]], rhs)
 
-        # ref_solution = np.abs(classical_solution.state / np.linalg.norm(classical_solution.state))
-        # vqls_solution = np.abs(np.real(Statevector(res.state).data))
-        
-        # with self.subTest(msg="test solution"):
-        #     assert np.allclose(ref_solution, vqls_solution, atol=1E-1, rtol=1E-1)
+                # ref_solution = np.abs(classical_solution.state / np.linalg.norm(classical_solution.state))
+                # vqls_solution = np.abs(np.real(Statevector(res.state).data))
+                
+                # with self.subTest(msg="test solution"):
+                #     assert np.allclose(ref_solution, vqls_solution, atol=1E-1, rtol=1E-1)
 
 
 if __name__ == "__main__":
