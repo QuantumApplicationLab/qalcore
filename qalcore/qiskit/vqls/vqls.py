@@ -21,7 +21,6 @@ from qiskit.algorithms.variational_algorithm import VariationalAlgorithm
 
 
 from qiskit.providers import Backend
-from qiskit.quantum_info.operators.base_operator import BaseOperator
 from qiskit.utils import QuantumInstance
 from qiskit.utils.backend_utils import is_aer_provider, is_statevector_backend
 from qiskit.utils.validation import validate_min
@@ -33,11 +32,7 @@ from qiskit.algorithms.minimum_eigen_solvers.vqe import (
 )
 
 from qiskit.opflow import (
-    StateFn,
-    ExpectationBase,
-    CircuitSampler,
-    ListOp,
-    ExpectationFactory,
+    CircuitSampler
 )
 
 
