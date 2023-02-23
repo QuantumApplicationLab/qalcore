@@ -85,7 +85,7 @@ class TestVQLS(QiskitTestCase):
 
         # classical_solution = NumPyLinearSolver().solve(matrix, rhs/np.linalg.norm(rhs))
         
-        for estimator, sampler in  zip(self.estimator, self.sampler):
+        for estimator, sampler in  zip(self.estimators, self.samplers):
             for opt in self.options:
 
                 vqls = VQLS(
@@ -133,7 +133,7 @@ class TestVQLS(QiskitTestCase):
         np_rhs = Operator(rhs).data @ np.array([1,0,0,0])
 
         # classical_solution = NumPyLinearSolver().solve(np_matrix, np_rhs/np.linalg.norm(np_rhs))
-        for estimator, sampler in  zip(self.estimator, self.sampler):
+        for estimator, sampler in  zip(self.estimators, self.samplers):
             for opt in self.options:
                 vqls = VQLS(
                     estimator,
