@@ -27,8 +27,8 @@ vqls = VQLS(
     sampler=sampler
 )
 
-opt= {"use_overlap_test": True,
-      "use_local_cost_function": False}
+opt= {"use_overlap_test": False,
+      "use_local_cost_function": True}
 res = vqls.solve(A, b, opt)
 
 

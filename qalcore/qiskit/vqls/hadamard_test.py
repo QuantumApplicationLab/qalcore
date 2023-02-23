@@ -357,7 +357,7 @@ class HadammardOverlapTest:
                 
                 # add missing keys 
                 val = np.array([qd[k] if k in qd else 0 for k in range(2**self.num_qubits)])
-                val = (val * val.conj())
+                # val = (val * val.conj())
             
                 # v0, v1 = np.array_split(val, 2)
                 v0, v1 = val[0::2], val[1::2]
