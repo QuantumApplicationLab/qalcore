@@ -382,7 +382,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                 hdmr_tests_norm.append( HadammardTest(
                     operators=[mi.circuit.inverse(), mj.circuit],
                     apply_initial_state=self._ansatz,
-                    apply_measurement=False,
+                    apply_measurement=False
                     )
                 )
         return hdmr_tests_norm
@@ -419,7 +419,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                                     mj.circuit.inverse()],
                         apply_control_to_operator=[True, True, False, True, True],
                         apply_initial_state = self.ansatz,
-                        apply_measurement = False 
+                        apply_measurement = False
                         )
                     )
         return hdmr_tests_overlap

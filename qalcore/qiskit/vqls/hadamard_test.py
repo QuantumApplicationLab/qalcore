@@ -2,6 +2,7 @@
 
 from typing import Optional, List, Union
 from qiskit import QuantumCircuit, QuantumRegister
+from qiskit.algorithms.exceptions import AlgorithmError
 from qiskit.opflow import Z, I, TensoredOp, StateFn, ListOp
 from qiskit.quantum_info import SparsePauliOp
 from qiskit.circuit import Parameter
@@ -156,7 +157,6 @@ class HadammardTest:
 
         # one_op = (I - Z) / 2
         # one_op_ctrl = TensoredOp((self.num_qubits - 1) * [I]) ^ one_op
-        self.num_qubits
         p0 = "I" * self.num_qubits
         p1 = "I" * (self.num_qubits-1) + "Z"
         one_op_ctrl = SparsePauliOp([p0,p1], np.array([0.5, -0.5]))
@@ -169,9 +169,11 @@ class HadammardTest:
 
         ncircuits = len(self.circuits)
 
-        job = estimator.run(self.circuits, [self.observable]*ncircuits, [parameter_sets]*ncircuits)
-        results = post_processing(job.result())
-
+        try:
+            job = estimator.run(self.circuits, [self.observable]*ncircuits, [parameter_sets]*ncircuits)
+            results = post_processing(job.result())
+        except Exception as exc:
+            raise AlgorithmError("The primitive to evaluate the Hadammard Test failed!") from exc
         results = np.array(results).astype('complex128')
         results *= np.array([1.0, 1.0j])
 
