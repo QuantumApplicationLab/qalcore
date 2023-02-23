@@ -92,7 +92,6 @@ class TestVQLS(QiskitTestCase):
                     estimator,
                     ansatz,
                     COBYLA(maxiter=2, disp=True),
-                    sampler=Sampler(),
                     callback=self.log.update,
                     sampler=sampler
                 )
