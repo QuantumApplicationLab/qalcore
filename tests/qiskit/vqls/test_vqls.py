@@ -90,8 +90,8 @@ class TestVQLS(QiskitTestCase):
 
                 vqls = VQLS(
                     estimator,
-                    ansatz=ansatz,
-                    optimizer=COBYLA(maxiter=2, disp=True),
+                    ansatz,
+                    COBYLA(maxiter=2, disp=True),
                     sampler=Sampler(),
                     callback=self.log.update,
                     sampler=sampler
@@ -137,9 +137,9 @@ class TestVQLS(QiskitTestCase):
         for estimator, sampler in  zip(self.estimator, self.sampler):
             for opt in self.options:
                 vqls = VQLS(
-                    estimator
-                    ansatz=ansatz,
-                    optimizer=COBYLA(maxiter=2, disp=True),
+                    estimator,
+                    ansatz,
+                    COBYLA(maxiter=2, disp=True),
                     sampler=sampler,
                     callback=self.log.update
                 )
