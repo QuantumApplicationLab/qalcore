@@ -108,7 +108,8 @@ class HadammardTest:
 
             if apply_initial_state is not None:
                 qc.append(
-                    apply_initial_state, list(range(1, self.num_qubits))
+                    apply_initial_state, 
+                    list(range(1, self.num_qubits))
                 )
 
             if use_barrier:
@@ -129,10 +130,10 @@ class HadammardTest:
                 if ctrl:
                     qc.append(
                         op.control(1),
-                        qubits=list(range(0, self.num_qubits))
+                        list(range(0, self.num_qubits))
                     )
                 else:
-                    qc.append(op, qubits=list(range(0, self.num_qubits)))
+                    qc.append(op, list(range(0, self.num_qubits)))
             if use_barrier:
                 qc.barrier()
 
