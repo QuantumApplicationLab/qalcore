@@ -95,12 +95,13 @@ class Decomposition:
                 raise ValueError("number of coefficients and circuits do not match")
 
             self.num_qubits: int = self._circuits[0].num_qubits
-            if not all(map(lambda i: i == self.num_qubits, self._circuits)):
-                raise ValueError(f"mismatched number of qubits: {self._circuits}")
+            if not all(map(lambda ct: ct.num_qubits == self.num_qubits, self.circuits)):
+                _num_qubits = [ct.num_qubits for ct in self.circuits]
+                raise ValueError(f"mismatched number of qubits: {_num_qubits}")
 
-            self._unitary_matrices = [Operator(qc).data for qc in self._circuits]
+            self._unitary_matrices = [Operator(qc).data for qc in self.circuits]
 
-            self._matrix = self.recompose(self.coefficients, self.circuits)
+            self._matrix = self.recompose(self.coefficients, self.unitary_matrices)
         else:
             raise ValueError(
                 f"inconsistent arguments: matrix={matrix}, coefficients={coefficients}, circuits={circuits}"
