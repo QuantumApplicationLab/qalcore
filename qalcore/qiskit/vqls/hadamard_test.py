@@ -107,8 +107,8 @@ class HadammardTest:
                 qc = QuantumCircuit(self.num_qubits)
 
             if apply_initial_state is not None:
-                qc.compose(
-                    apply_initial_state, list(range(1, self.num_qubits)), inplace=True
+                qc.append(
+                    apply_initial_state, list(range(1, self.num_qubits))
                 )
 
             if use_barrier:
@@ -127,13 +127,12 @@ class HadammardTest:
             # matrix circuit
             for op, ctrl in zip(operators, apply_control_to_operator):
                 if ctrl:
-                    qc.compose(
+                    qc.append(
                         op.control(1),
-                        qubits=list(range(0, self.num_qubits)),
-                        inplace=True,
+                        qubits=list(range(0, self.num_qubits))
                     )
                 else:
-                    qc.compose(op, qubits=list(range(0, self.num_qubits)), inplace=True)
+                    qc.append(op, qubits=list(range(0, self.num_qubits)))
             if use_barrier:
                 qc.barrier()
 
@@ -155,8 +154,6 @@ class HadammardTest:
             Lis[TensoredOp]: List of two observables to measure |1> on the control qubit I^...^I^|1><1|
         """
 
-        # one_op = (I - Z) / 2
-        # one_op_ctrl = TensoredOp((self.num_qubits - 1) * [I]) ^ one_op
         p0 = "I" * self.num_qubits
         p1 = "I" * (self.num_qubits-1) + "Z"
         one_op_ctrl = SparsePauliOp([p0,p1], np.array([0.5, -0.5]))
@@ -270,23 +267,23 @@ class HadammardOverlapTest:
 
             # prepare psi on the first register
             if apply_initial_state is not None:
-                qc.compose(
-                    apply_initial_state, qreg0, inplace=True
+                qc.append(
+                    apply_initial_state, qreg0
                 )
 
             # apply U on the second register
-            qc.compose(U, qreg1, inplace=True)
+            qc.append(U, qreg1)
 
             if use_barrier:
                 qc.barrier()
 
             # apply Al on the first qreg
             idx = [0] + list(range(1,Al.num_qubits+1))
-            qc.compose(Al.control(1), idx, inplace=True)
+            qc.append(Al.control(1), idx)
 
             # apply Am^\dagger on the second reg
             idx = [0] + list(range(Al.num_qubits+1,2*Al.num_qubits+1))
-            qc.compose(Am.inverse().control(1), idx, inplace=True)
+            qc.append(Am.inverse().control(1), idx)
 
             if use_barrier:
                 qc.barrier()
