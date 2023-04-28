@@ -30,7 +30,7 @@ from qalcore.qiskit.vqls.numpy_unitary_matrices import UnitaryDecomposition
 
 from qiskit.quantum_info import Operator
 from qiskit.algorithms.optimizers import COBYLA
-
+from qiskit.primitives import Estimator, Sampler, BackendEstimator, BackendSampler
 from qalcore.qiskit.vqls import VQLS, VQLSLog
 
 if has_aer():
@@ -59,23 +59,18 @@ class TestVQLS(QiskitTestCase):
             },             
         )
 
-        self.backends = (
-            QuantumInstance(
-                BasicAer.get_backend("qasm_simulator"),
-                shots=1024,
-                seed_simulator=self.seed,
-                seed_transpiler=self.seed,
-            ),
+        self.estimators = (
+            Estimator(),
+            BackendEstimator(BasicAer.get_backend("qasm_simulator")),
+        )
 
-            QuantumInstance(
-                BasicAer.get_backend("statevector_simulator"),
-                shots=1,
-                seed_simulator=self.seed,
-                seed_transpiler=self.seed,
-            )
+        self.samplers = (
+            Sampler(),
+            BackendSampler(BasicAer.get_backend("qasm_simulator"))
         )
 
         self.log = VQLSLog([],[])
+
 
     def test_numpy_input(self):
         """Test the VQLS on matrix input using statevector simulator."""
@@ -90,13 +85,15 @@ class TestVQLS(QiskitTestCase):
 
         # classical_solution = NumPyLinearSolver().solve(matrix, rhs/np.linalg.norm(rhs))
         
-        for qi in self.backends:
+        for estimator, sampler in  zip(self.estimators, self.samplers):
             for opt in self.options:
+
                 vqls = VQLS(
-                    ansatz=ansatz,
-                    optimizer=COBYLA(maxiter=2, disp=True),
-                    quantum_instance=qi,
-                    callback=self.log.update
+                    estimator,
+                    ansatz,
+                    COBYLA(maxiter=2, disp=True),
+                    callback=self.log.update,
+                    sampler=sampler
                 )
                 res = vqls.solve(matrix, rhs, opt)
 
@@ -136,12 +133,13 @@ class TestVQLS(QiskitTestCase):
         np_rhs = Operator(rhs).data @ np.array([1,0,0,0])
 
         # classical_solution = NumPyLinearSolver().solve(np_matrix, np_rhs/np.linalg.norm(np_rhs))
-        for qi in self.backends:
+        for estimator, sampler in  zip(self.estimators, self.samplers):
             for opt in self.options:
                 vqls = VQLS(
-                    ansatz=ansatz,
-                    optimizer=COBYLA(maxiter=2, disp=True),
-                    quantum_instance=qi,
+                    estimator,
+                    ansatz,
+                    COBYLA(maxiter=2, disp=True),
+                    sampler=sampler,
                     callback=self.log.update
                 )
                 res = vqls.solve([[0.5, qc1], [0.5, qc2]], rhs, opt)

@@ -16,7 +16,6 @@ import numpy as np
 from qiskit.circuit.library.n_local.real_amplitudes import RealAmplitudes
 from qiskit import Aer
 from qiskit import QuantumCircuit
-
 from qiskit.algorithms.variational_algorithm import VariationalAlgorithm
 
 
@@ -46,6 +45,8 @@ from qalcore.qiskit.vqls.variational_linear_solver import (
 )
 from qalcore.qiskit.vqls.numpy_unitary_matrices import UnitaryDecomposition
 from qalcore.qiskit.vqls.hadamard_test import HadammardTest, HadammardOverlapTest
+
+from qiskit.primitives import BaseEstimator, BaseSampler
 
 from dataclasses import dataclass
 
@@ -113,13 +114,14 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
     def __init__(
         self,
-        ansatz: Optional[QuantumCircuit] = None,
-        optimizer: Optional[Union[Optimizer, Minimizer]] = None,
+        estimator: BaseEstimator, 
+        ansatz: QuantumCircuit,
+        optimizer: Union[Optimizer,Minimizer],
+        sampler: Optional[Union[BaseSampler, None]] = None,
         initial_point: Optional[np.ndarray] = None,
         gradient: Optional[Union[GradientBase, Callable]] = None,
         max_evals_grouped: Optional[int] = 1,
         callback: Optional[Callable[[int, np.ndarray, float, float], None]] = None,
-        quantum_instance: Optional[Union[Backend, QuantumInstance]] = None,
 
     ) -> None:
         r"""
@@ -142,9 +144,6 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                 Three parameter values are passed to the callback as follows during each evaluation
                 by the optimizer for its current set of parameters as it works towards the minimum.
                 These are: the evaluation count, the cost and the optimizer parameters for the ansatz
-            quantum_instance: Quantum Instance or Backend
-            use_overlap_test: Use Hadamard overlap test to compute the cost function
-            use_local_cost_function: use the local cost function and not the global one
         """
         super().__init__()
 
@@ -155,23 +154,16 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         self._max_evals_grouped = max_evals_grouped
         self._circuit_sampler = None  # type: Optional[CircuitSampler]
 
-        self._ansatz = None
+        self.estimator = estimator
+        self.sampler = sampler
         self.ansatz = ansatz
+        self.optimizer = optimizer
 
         self._initial_point = None
         self.initial_point = initial_point
 
-        self._optimizer = None
-        self.optimizer = optimizer
-
         self._gradient = None
         self.gradient = gradient
-
-        self._quantum_instance = None
-
-        if quantum_instance is None:
-            quantum_instance = Aer.get_backend("aer_simulator_statevector")
-        self.quantum_instance = quantum_instance
 
         self._callback = None
         self.callback = callback
@@ -225,26 +217,6 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
         self._ansatz = ansatz
         self.num_qubits = ansatz.num_qubits + 1
-
-    @property
-    def quantum_instance(self) -> Optional[QuantumInstance]:
-        """Returns quantum instance."""
-        return self._quantum_instance
-
-    @quantum_instance.setter
-    def quantum_instance(
-        self, quantum_instance: Union[QuantumInstance, Backend]
-    ) -> None:
-        """Sets quantum_instance"""
-        if not isinstance(quantum_instance, QuantumInstance):
-            quantum_instance = QuantumInstance(quantum_instance)
-
-        self._quantum_instance = quantum_instance
-        self._circuit_sampler = CircuitSampler(
-            quantum_instance,
-            statevector=is_statevector_backend(quantum_instance.backend),
-            param_qobj=is_aer_provider(quantum_instance.backend),
-        )
 
     @property
     def initial_point(self) -> Optional[np.ndarray]:
@@ -410,7 +382,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                 hdmr_tests_norm.append( HadammardTest(
                     operators=[mi.circuit.inverse(), mj.circuit],
                     apply_initial_state=self._ansatz,
-                    apply_measurement=False,
+                    apply_measurement=False
                     )
                 )
         return hdmr_tests_norm
@@ -447,7 +419,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                                     mj.circuit.inverse()],
                         apply_control_to_operator=[True, True, False, True, True],
                         apply_initial_state = self.ansatz,
-                        apply_measurement = False 
+                        apply_measurement = False
                         )
                     )
         return hdmr_tests_overlap
@@ -480,7 +452,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                     hdmr_tests_overlap.append(HadammardOverlapTest(
                         operators = [self.vector_circuit, mi.circuit, mj.circuit],
                         apply_initial_state = self.ansatz,
-                        apply_measurement = False 
+                        apply_measurement = True 
                         )
                     )
         else:
@@ -696,30 +668,19 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
             raise RuntimeError(
                 "The ansatz must be parameterized, but has 0 free parameters."
             )
-
     
-        ansatz_params = self.ansatz.parameters
-        for hdmr in hdmr_tests_norm:
-            hdmr.construct_expectation(ansatz_params)
-
-        for hdmr in hdmr_tests_overlap:
-            hdmr.construct_expectation(ansatz_params)
-
-
         def cost_evaluation(parameters):
 
-            # Create dict associating each parameter with the lists of parameterization values for it
-            parameter_sets = np.reshape(parameters, (-1, num_parameters))
-            param_bindings = dict(
-                zip(ansatz_params, parameter_sets.transpose().tolist())
-            )
-
-            # get the sampled output
-            hdmr_values_norm = np.array([hdrm.get_value(self._circuit_sampler, param_bindings) 
+            # estimate the expected values of the norm circuits
+            hdmr_values_norm = np.array([hdrm.get_value(self.estimator, parameters) 
                                                                 for hdrm in hdmr_tests_norm])
-            hdmr_values_overlap = np.array([hdrm.get_value(self._circuit_sampler, param_bindings) 
-                                                                for hdrm in hdmr_tests_overlap])
 
+            if options["use_overlap_test"]:
+                hdmr_values_overlap = np.array([hdrm.get_value(self.sampler, parameters) 
+                                                                    for hdrm in hdmr_tests_overlap])
+            else:
+                hdmr_values_overlap = np.array([hdrm.get_value(self.estimator, parameters) 
+                                                                    for hdrm in hdmr_tests_overlap])              
             # compute the total cost
             cost = self._assemble_cost_function(hdmr_values_norm, 
                                                 hdmr_values_overlap, 
@@ -728,9 +689,8 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
             # get the intermediate results if required
             if self._callback is not None:
-                for param_set in parameter_sets:
-                    self._eval_count += 1
-                    self._callback(self._eval_count, cost, param_set)
+                self._eval_count += 1
+                self._callback(self._eval_count, cost, parameters)
             else:
                 self._eval_count += 1
                 print(f"VQLS Iteration {self._eval_count} Cost {cost}", end="\r", flush=True) 
@@ -761,6 +721,9 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         
         if options["use_overlap_test"] and options["use_local_cost_function"]:
             raise ValueError("Local cost function cannot be used with Hadamard Overlap test")
+
+        if options["use_overlap_test"] and self.sampler is None:
+            raise ValueError("Please provide a sampler primitives when using Hadamard Overlap test")
 
         return options 
 
@@ -810,10 +773,8 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         self._eval_count = 0
 
         # get the cost evaluation function
-        cost_evaluation = self.get_cost_evaluation_function(hdmr_tests_norm, 
-                                                            hdmr_tests_overlap, 
-                                                            coefficient_matrix,
-                                                            options)
+        cost_evaluation = self.get_cost_evaluation_function(hdmr_tests_norm, hdmr_tests_overlap, 
+                                                            coefficient_matrix, options)
 
         if callable(self.optimizer):
             opt_result = self.optimizer(  # pylint: disable=not-callable
