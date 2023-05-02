@@ -1,4 +1,5 @@
 import numpy as np
+from numpy.testing import assert_allclose
 import pytest
 
 from qalcore.qiskit.vqls.numpy_unitary_matrices import (
@@ -7,13 +8,20 @@ from qalcore.qiskit.vqls.numpy_unitary_matrices import (
 )
 
 
+@pytest.fixture(params=[2, 4, 8, 16])
+def symmetric(request):
+    dim = request.param
+    mat = np.random.rand(dim,dim)
+    mat = mat + mat.T
+    return mat
+
+
 def test_decomposition_base():
     mat = np.eye(4)[-1::-1]
     with pytest.raises(NotImplementedError, match="decompose.+Decomposition"):
         Decomposition(matrix=mat)
 
 
-def test_unitary_decomposition():
-    mat = np.eye(4)[-1::-1]
-    # assert np.allclose(np.eye(16), np.dot(mat, mat.conj().T))
-    decomp = UnitaryDecomposition(matrix=mat)
+def test_unitary_decomposition(symmetric):
+    decomp = UnitaryDecomposition(matrix=symmetric)
+    assert_allclose(decomp.recompose(decomp._coefficients, decomp._unitary_matrices), symmetric)
