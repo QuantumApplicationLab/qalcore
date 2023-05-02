@@ -17,13 +17,27 @@ complex_arr_t = npt.NDArray[np.cdouble]
 
 
 def auxilliary_matrix(x: Union[npt.NDArray[np.float_], complex_arr_t]) -> complex_arr_t:
-    """Compute i * sqrt(I - x^2)
+    """
+    Returns the auxiliary matrix for the QFT of size n.
 
-    Args:
-        x (np.ndarray): input matrix
+    Parameters
+    ----------
+    n : int
+        The size of the QFT.
 
-    Returns:
-        np.ndarray: values of i * sqrt(I - x^2)
+    Returns
+    -------
+    np.ndarray
+        The auxiliary matrix.
+
+    Notes
+    -----
+    The auxiliary matrix is defined as the matrix with elements
+    aux[i, j] = exp(2*pi*i*j/n) / sqrt(n).
+
+    See Also
+    --------
+    qft : The quantum Fourier transform.
     """
     mat = np.eye(len(x)) - x @ x
     mat = cast(npt.NDArray[Union[np.float_, np.cdouble]], spla.sqrtm(mat))
@@ -191,10 +205,17 @@ class Decomposition:
         return self.CircuitElement(self._coefficients[index], self._circuits[index])
 
     def recompose(self) -> complex_arr_t:
-        """Rebuilds the original matrix from the decomposed one.
+        """
+        Rebuilds the original matrix from the decomposed one.
 
-        Returns:
-            np.ndarray: recomposed matrix
+        Returns
+        -------
+        np.ndarray
+            The recomposed matrix.
+
+        See Also
+        --------
+        decompose_matrix : Decompose a generic numpy matrix into a sum of unitary matrices.
         """
         coeffs, matrices = self.coefficients, self.matrices
         return (coeffs.reshape(len(coeffs), 1, 1) * matrices).sum(axis=0)
@@ -204,15 +225,40 @@ class Decomposition:
 
 
 class UnitaryDecomposition(Decomposition):
+    """
+    A class that represents the unitary decomposition of a matrix.
+
+    Methods
+    -------
+    decompose_matrix() -> Tuple[complex_arr_t, List[complex_arr_t]]:
+        Decompose a generic numpy matrix into a sum of unitary matrices.
+
+    See Also
+    --------
+    Decomposition : A base class for matrix decompositions.
+    recompose : Rebuilds the original matrix from the decomposed one.
+    """
+
     def decompose_matrix(
         self,
     ) -> Tuple[complex_arr_t, List[complex_arr_t]]:
-        """Decompose a generic numpy matrix into a sum of unitary matrices
-
-        Returns:
-            Tuple: list of coefficients and numpy matrix of the decompostion
         """
+        Decompose a generic numpy matrix into a sum of unitary matrices.
 
+        Parameters
+        ----------
+        matrix : np.ndarray
+            The matrix to be decomposed.
+
+        Returns
+        -------
+        Tuple[np.ndarray, np.ndarray]
+            A tuple containing the list of coefficients and the numpy matrix of the decomposition.
+
+        See Also
+        --------
+        recompose : Rebuilds the original matrix from the decomposed one.
+        """
         # Normalize
         norm = np.linalg.norm(self._matrix)
         mat = self._matrix / norm
@@ -223,7 +269,7 @@ class UnitaryDecomposition(Decomposition):
         coef_real = norm * 0.5
         coef_imag = coef_real * 1j
 
-        ## Get the matrices
+        # Get the matrices
         unitary_matrices, unitary_coefficients = [], []
         if not np.allclose(mat_real, 0.0):
             aux_mat = auxilliary_matrix(mat_real)
@@ -240,6 +286,24 @@ class UnitaryDecomposition(Decomposition):
 
 
 class PauliDecomposition(Decomposition):
+    """
+    A class that represents the Pauli decomposition of a matrix.
+
+    Attributes
+    ----------
+    basis : str
+        The basis of Pauli gates used for the decomposition.
+
+    Methods
+    -------
+    decompose_matrix() -> Tuple[complex_arr_t, List[complex_arr_t]]:
+        Decompose a matrix into a sum of Pauli gates.
+
+    See Also
+    --------
+    Decomposition : A base class for matrix decompositions.
+    """
+
     basis = "IXYZ"
 
     def decompose_matrix(
