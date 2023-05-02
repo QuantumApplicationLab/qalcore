@@ -12,6 +12,22 @@ from qiskit.quantum_info import Operator
 complex_t = TypeVar("complex_t", float, complex)
 
 
+def auxilliary_matrix(
+    x: npt.NDArray[Union[np.float_, np.cdouble]]
+) -> npt.NDArray[np.cdouble]:
+    """Compute i * sqrt(I - x^2)
+
+    Args:
+        x (np.ndarray): input matrix
+
+    Returns:
+        np.ndarray: values of i * sqrt(I - x^2)
+    """
+    mat = np.eye(len(x)) - x @ x
+    mat = cast(npt.NDArray[Union[np.float_, np.cdouble]], spla.sqrtm(mat))
+    return 1.0j * mat
+
+
 class Decomposition:
     r"""Compute the unitary decomposition of a general matrix
     See:
@@ -54,7 +70,6 @@ class Decomposition:
             Union[float, complex, List[float], List[complex]]
         ] = None,
         check_decomposition: Optional[bool] = True,
-        normalize_coefficients: Optional[bool] = True,
     ):
         """Unitary decomposition
 
@@ -63,7 +78,6 @@ class Decomposition:
             circuit (Optional[Union[QuantumCircuit, List[QuantumCircuit]]], optional): quantum circuit(s) representing the matrix.
             coefficients (Optional[Union[float, complex, List[float], List[complex]]], optional): coefficients of associated with the input quantum circuits.
             check_decomposition (Optional[bool], optional): Check if the decomposition matches the input matrix. Defaults to True.
-            normalize_coefficients (Optional[bool], optional): normalize the coefficients of the decomposition. Defaults to True.
 
         - matrix: NDArray[np.cdouble]
         - coefficients: NDArray[np.cdouble]
@@ -75,7 +89,7 @@ class Decomposition:
         if matrix is not None:  # ignore circuits & coefficients
             self._matrix, self.num_qubits = self._validate_matrix(matrix)
             self._coefficients, self._unitary_matrices = self.decompose_matrix(
-                check=check_decomposition, normalize_coefficients=normalize_coefficients
+                check=check_decomposition
             )
 
             self._circuits = self.create_circuits(self.unitary_matrices)
@@ -184,39 +198,9 @@ class Decomposition:
 
         return [make_qc(mat) for mat in unit_mats]
 
-    def normalize_coefficients(
-        self, unit_coeffs: npt.NDArray[np.cdouble]
-    ) -> npt.NDArray[np.cdouble]:
-        """Normalize the coefficients
-
-        Args:
-            unit_coeffs (npt.NDArray[np.cdouble]): list of coefficients
-
-        Returns:
-            npt.NDArray[np.cdouble]: List of normalized coefficients
-        """
-        return unit_coeffs / unit_coeffs.sum()
-
-    @classmethod
-    def get_auxilliary_matrix(
-        cls, x: npt.NDArray[Union[np.float_, np.cdouble]]
-    ) -> npt.NDArray[np.cdouble]:
-        """Compute i * sqrt(I - x^2)
-
-        Args:
-            x (np.ndarray): input matrix
-
-        Returns:
-            np.ndarray: values of i * sqrt(I - x^2)
-        """
-        mat = np.eye(len(x)) - x @ x
-        mat = cast(npt.NDArray[Union[np.float_, np.cdouble]], spla.sqrtm(mat))
-        return 1.0j * mat
-
     def decompose_matrix(
         self,
         check: Optional[bool] = False,
-        normalize_coefficients: Optional[bool] = False,
     ) -> Tuple[npt.NDArray[np.cdouble], List[npt.NDArray[np.cdouble]]]:
         raise NotImplementedError(f"can't decompose in {self.__class__.__name__!r}")
 
@@ -225,13 +209,11 @@ class UnitaryDecomposition(Decomposition):
     def decompose_matrix(
         self,
         check: Optional[bool] = False,
-        normalize_coefficients: Optional[bool] = False,
     ) -> Tuple[npt.NDArray[np.cdouble], List[npt.NDArray[np.cdouble]]]:
         """Decompose a generic numpy matrix into a sum of unitary matrices
 
         Args:
             check (Optional[bool], optional): _description_. Defaults to False.
-            normalize_coefficients (Optional[bool], optional): _description_. Defaults to False.
 
         Returns:
             Tuple: list of coefficients and numpy matrix of the decompostion
@@ -250,12 +232,12 @@ class UnitaryDecomposition(Decomposition):
         ## Get the matrices
         unitary_matrices, unitary_coefficients = [], []
         if not np.allclose(mat_real, 0.0):
-            aux_mat = self.get_auxilliary_matrix(mat_real)
+            aux_mat = auxilliary_matrix(mat_real)
             unitary_matrices += [mat_real + aux_mat, mat_real - aux_mat]
             unitary_coefficients += [coef_real] * 2
 
         if not np.allclose(mat_imag, 0.0):
-            aux_mat = self.get_auxilliary_matrix(mat_imag)
+            aux_mat = auxilliary_matrix(mat_imag)
             unitary_matrices += [mat_imag + aux_mat, mat_imag - aux_mat]
             unitary_coefficients += [coef_imag] * 2
         unit_coeffs = np.array(unitary_coefficients, dtype=np.cdouble)
@@ -263,9 +245,6 @@ class UnitaryDecomposition(Decomposition):
         if check:
             mat_recomp = self.recompose(unit_coeffs, unitary_matrices)
             assert np.allclose(self._matrix, mat_recomp)
-
-        if normalize_coefficients:
-            unit_coeffs = self.normalize_coefficients(unit_coeffs)
 
         return unit_coeffs, unitary_matrices
 
