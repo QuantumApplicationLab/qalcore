@@ -132,7 +132,7 @@ class TestVQLS(QiskitTestCase):
             coefficients = [0.5, 0.5]
         )
 
-        np_matrix = matrix.recompose(matrix.coefficients, matrix.unitary_matrices )
+        np_matrix = matrix.recompose()
         np_rhs = Operator(rhs).data @ np.array([1,0,0,0])
 
         # classical_solution = NumPyLinearSolver().solve(np_matrix, np_rhs/np.linalg.norm(np_rhs))
