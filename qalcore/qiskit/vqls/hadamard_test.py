@@ -157,7 +157,7 @@ class HadammardTest:
 
         p0 = "I" * self.num_qubits
         p1 = "I" * (self.num_qubits-1) + "Z"
-        one_op_ctrl = SparsePauliOp([p0,p1], np.array([0.5, -0.5]))
+        one_op_ctrl = SparsePauliOp([p0,p1], np.array([0.5 +0.0j, -0.5 +0.0j]))
         return one_op_ctrl
 
     def get_value(self, estimator, parameter_sets: List) -> List:
@@ -347,8 +347,25 @@ class HadammardOverlapTest:
 
 
     def get_value(self, sampler, parameter_sets: List) -> float:
+        """Compute and return the value of Hadmard overlap test
+
+        Args:
+            sampler (Sampler): a Sampler primitive to extract the output of the circuits
+            parameter_sets (List): the parameters of the variational circuits
+
+        Returns:
+            float: value of the overlap hadammard test
+        """
 
         def post_processing(sampler_result) -> List:
+            """Post process the sampled values of the circuits
+
+            Args:
+                sampler_result (results): Result of the sampler
+
+            Returns:
+                List: value of the overlap hadammard test
+            """
             
             quasi_dist = sampler_result.quasi_dists
             output = []

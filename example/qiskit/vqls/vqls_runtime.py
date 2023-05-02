@@ -1,6 +1,6 @@
-from qalcore.qiskit.vqls.vqls import VQLS
+from qalcore.qiskit.vqls.vqls import VQLS, VQLSLog
 from qiskit.circuit.library.n_local.real_amplitudes import RealAmplitudes
-from qiskit.algorithms.optimizers import COBYLA
+from qiskit.algorithms.optimizers import COBYLA, ADAM
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -24,7 +24,8 @@ ansatz = RealAmplitudes(2, entanglement="full", reps=3, insert_barriers=False)
 # define the runtime
 service = QiskitRuntimeService()
 # backend = "ibmq_qasm_simulator"
-backend =  "simulator_statevector"
+# backend =  "simulator_statevector"
+backend = "ibm_oslo"
 
 with Session(service=service, backend=backend) as session:
 
@@ -36,7 +37,7 @@ with Session(service=service, backend=backend) as session:
     vqls = VQLS(
         estimator,
         ansatz,
-        COBYLA(maxiter=5, disp=True)
+        ADAM(maxiter=5, disp=True)
     )
     opt= {"use_overlap_test": False,
         "use_local_cost_function": False}
