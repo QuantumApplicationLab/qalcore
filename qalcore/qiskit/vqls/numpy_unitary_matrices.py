@@ -66,7 +66,7 @@ class Decomposition:
         circuits : Union[QuantumCircuit, List[QuantumCircuit]]
             quantum circuits representing the matrix
 
-        coefficients : Optional[Union[float, complex, List[float], List[complex]]] (default: None)
+        coefficients : Union[float, complex, List[float], List[complex]] (default: None)
             coefficients associated with the input quantum circuits; `None` is
             valid only for a circuit with 1 element
 
@@ -95,9 +95,7 @@ class Decomposition:
             raise ValueError(f"mismatched number of qubits: {_num_qubits}")
 
         self._matrices = [Operator(qc).data for qc in self.circuits]
-
         self._matrix = self.recompose()
-
         self.num_circuits = len(self._circuits)
         self.iiter = 0
 
@@ -166,6 +164,8 @@ class UnitaryDecomposition(Decomposition):
             self._matrix, self.num_qubits = self._validate_matrix(matrix)
             self._coefficients, self._matrices = self.decompose_matrix()
             self._circuits = self._create_circuits(self.matrices)
+            self.num_circuits = len(self._circuits)
+            self.iiter = 0
         else:
             if circuits is not None:
                 super().__init__(circuits, coefficients)
