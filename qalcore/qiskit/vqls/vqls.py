@@ -10,18 +10,14 @@ See https://arxiv.org/abs/1909.05820
 
 
 
-from typing import Optional, Union, List, Callable, Tuple, Dict
+from typing import Optional, Union, List, Callable, Dict
 import numpy as np
 
 from qiskit.circuit.library.n_local.real_amplitudes import RealAmplitudes
-from qiskit import Aer
 from qiskit import QuantumCircuit
 from qiskit.algorithms.variational_algorithm import VariationalAlgorithm
 
 
-from qiskit.providers import Backend
-from qiskit.utils import QuantumInstance
-from qiskit.utils.backend_utils import is_aer_provider, is_statevector_backend
 from qiskit.utils.validation import validate_min
 
 
@@ -71,39 +67,61 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
         .. jupyter-execute:
 
-            from qalcore.qiskit.vqls import VQLS
+            from qalcore.qiskit.vqls.vqls import VQLS, VQLSLog
             from qiskit.circuit.library.n_local.real_amplitudes import RealAmplitudes
-            from qiskit.algorithms.optimizers import COBYLA
-            from qiskit.algorithms.linear_solvers.numpy_linear_solver import NumPyLinearSolver
-            from qiskit import Aer
+            from qiskit.algorithms import optimizers as opt
+            from qiskit import Aer, BasicAer
             import numpy as np
 
-            # define the matrix and the rhs
-            matrix = np.random.rand(4,4)
-            matrix = (matrix + matrix.T)
-            rhs = np.random.rand(4)
+            from qiskit.quantum_info import Statevector
+            import matplotlib.pyplot as plt
+            from qiskit.primitives import Estimator, Sampler, BackendEstimator
 
-            # number of qubits needed
-            num_qubits = int(log2(A.shape[0]))
+            # create random symmetric matrix
+            A = np.random.rand(4, 4)
+            A = A + A.T
 
-            # get the classical solution
-            classical_solution = NumPyLinearSolver().solve(matrix,rhs/np.linalg.norm(rhs))
+            # create rhight hand side
+            b = np.random.rand(4)
 
-            # specify the backend
-            backend = Aer.get_backend('aer_simulator_statevector')
+            # solve using numpy
+            classical_solution = np.linalg.solve(A, b / np.linalg.norm(b))
+            ref_solution = classical_solution / np.linalg.norm(classical_solution)
 
-            # specify the ansatz
-            ansatz = RealAmplitudes(num_qubits, entanglement='full', reps=3, insert_barriers=False)
+            # define the wave function ansatz
+            ansatz = RealAmplitudes(2, entanglement="full", reps=3, insert_barriers=False)
 
-            # declare the solver
-            vqls  = VQLS(
-                ansatz=ansatz,
-                optimizer=COBYLA(maxiter=200, disp=True),
-                quantum_instance=backend
+            # define backend
+            backend = BasicAer.get_backend("statevector_simulator")
+            
+            # define an estimator primitive
+            estimator = Estimator()
+    
+            # define the logger
+            log = VQLSLog([],[])
+
+            # create the solver
+            vqls = VQLS(
+                estimator,
+                ansatz,
+                opt.CG(maxiter=200),
+                callback=log.update
             )
 
-            # solve the system
-            solution = vqls.solve(matrix,rhs)
+            # solve 
+            res = vqls.solve(A, b, opt)
+            vqls_solution = np.real(Statevector(res.state).data)
+
+            # plot solution
+            plt.scatter(ref_solution, vqls_solution)
+            plt.plot([-1, 1], [-1, 1], "--")
+            plt.show()
+
+            # plot cost function 
+            plt.plot(log.values)
+            plt.ylabel('Cost Function')
+            plt.xlabel('Iterations')
+            plt.show()
 
     References:
 
@@ -126,9 +144,13 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
     ) -> None:
         r"""
         Args:
+            estimator: an Estimator primitive to compute the expected values of the 
+                quantum circuits needed for the cost function
             ansatz: A parameterized circuit used as Ansatz for the wave function.
             optimizer: A classical optimizer. Can either be a Qiskit optimizer or a callable
                 that takes an array as input and returns a Qiskit or SciPy optimization result.
+            sampler: a Sampler primitive to sample the output of some quantum circuits needed to
+                compute the cost function. This is only needed if overal Hadammard tests are used.
             initial_point: An optional initial point (i.e. initial parameter values)
                 for the optimizer. If ``None`` then VQLS will look to the ansatz for a preferred
                 point and if not will simply compute a random one.
@@ -261,11 +283,9 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         """Sets the optimizer attribute.
 
         Args:
-            optimizer: The optimizer to be used. If None is passed, SLSQP is used by default.
+            optimizer: The optimizer to be used.
 
         """
-        if optimizer is None:
-            optimizer = SLSQP()
 
         if isinstance(optimizer, Optimizer):
             optimizer.set_max_evals_grouped(self.max_evals_grouped)
@@ -283,7 +303,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         Args:
             matrix (Union[np.ndarray, QuantumCircuit, List]): matrix of the linear system
             vector (Union[np.ndarray, QuantumCircuit]): rhs of thge linear system
-            appply_explicit_measurement (bool, Optional): add the measurement operation in the circuits
+            options (Dict): Options to compute defien the quantum circuits that compute the cost function 
 
         Raises:
             ValueError: if vector and matrix have different size
@@ -365,9 +385,6 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
     def _get_norm_circuits(self) -> List[QuantumCircuit]:
         """construct the circuit for the norm
 
-        Raises:
-            RuntimeError: _description_
-
         Returns:
             List[QuantumCircuit]: quantum circuits needed for the norm
         """
@@ -391,7 +408,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         """construct the circuits needed for the local cost function
 
         Returns:
-            List[QuantumCircuit]: quantum circuit for the local cost function
+            List[QuantumCircuit]: quantum circuits for the local cost function
         """
 
         hdmr_tests_overlap = []
@@ -429,13 +446,10 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         """construct circuits needed for the global cost function
 
         Args:
-            appply_explicit_measurement (bool): _description_
-
-        Raises:
-            RuntimeError: _description_
+            options (Dict): Options to define the quantum circuits that compute the cost function
 
         Returns:
-            List[QuantumCircuit]: _description_
+            List[QuantumCircuit]: quantum circuits needed for the global cost function
         """
 
         hdmr_tests_overlap = []
@@ -482,10 +496,13 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         coefficient_matrix: np.ndarray,
         options: Dict
     ) -> float:
-        r"""Compute the final cost function from the output of the different circuits
+        """Computes the value of the cost function
 
         Args:
-            probabiliy_circuit_output (List): expected values of the different circuits
+            hdmr_values_norm (np.ndarray): values of the hadamard test for the norm
+            hdmr_values_overlap (np.ndarray): values of the hadamard tests for the overlap
+            coefficient_matrix (np.ndarray): exapnsion coefficients of the matrix
+            options (Dict): options to compute cost function
 
         Returns:
             float: value of the cost function
@@ -521,7 +538,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         coeff_matrix: np.ndarray,
         hdmr_values: np.ndarray,
     ) -> float:
-        r"""Compute <phi|phi>
+        """Compute <phi|phi>
 
         .. math::
             \\langle\\Phi|\\Phi\\rangle = \\sum_{nm} c_n^*c_m \\langle 0|V^* U_n^* U_m V|0\\rangle
@@ -566,6 +583,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         Args:
             coeff_matrix (np.ndarray): the matrix values of the c_n^* c_m coefficients
             hdmr_values (List): values of the circuit outputs
+            options (Dict): options to compute cost function
 
         Returns:
             float: value of the sum
@@ -610,6 +628,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         Args:
             coeff_matrix (np.ndarray): the matrix values of the c_n^* c_m coefficients
             hdmr_values (List): values of the circuit outputs
+            norm (float): value of the norm term
 
         Returns:
             float: value of the sum
@@ -654,7 +673,10 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         """Generate the cost function of the minimazation process
 
         Args:
-            circuits (List[QuantumCircuit]): circuits necessary to compute the cost function
+            hdmr_tests_norm (List): list of quantum circuits needed to compute the norm
+            hdmr_tests_overlap (List): list of quantum circuits needed to compute the norm
+            coefficient_matrix (np.ndarray): the matrix values of the c_n^* c_m coefficients
+            options (Dict): Option to compute the cost function
 
         Raises:
             RuntimeError: If the ansatz is not parametrizable
@@ -731,23 +753,14 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         self,
         matrix: Union[np.ndarray, QuantumCircuit, List[QuantumCircuit]],
         vector: Union[np.ndarray, QuantumCircuit],
-        options: Union[Dict, None],
+        options: Union[Dict, None] = None,
     ) -> VariationalLinearSolverResult:
         """Solve the linear system
 
         Args:
             matrix (Union[List, np.ndarray, QuantumCircuit]): matrix of the linear system
             vector (Union[np.ndarray, QuantumCircuit]): rhs of the linear system
-            observable: Optional information to be extracted from the solution.
-                Default is `None`.
-            observable_circuit: Optional circuit to be applied to the solution to extract
-                information. Default is `None`.
-            post_processing: Optional function to compute the value of the observable.
-                Default is the raw value of measuring the observable.
-
-        Raises:
-            ValueError: If an invalid combination of observable, observable_circuit and
-                post_processing is passed.
+            options (Union[Dict, None]): options for the calculation of the cost function  
 
         Returns:
             VariationalLinearSolverResult: Result of the optimization and solution vector of the linear system
