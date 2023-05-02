@@ -1,4 +1,5 @@
 from collections import namedtuple
+from itertools import product
 from types import SimpleNamespace
 from typing import Optional, Union, List, Tuple, TypeVar, cast
 
@@ -8,7 +9,7 @@ import numpy.typing as npt
 import scipy.linalg as spla
 
 from qiskit.circuit import QuantumCircuit
-from qiskit.quantum_info import Operator
+from qiskit.quantum_info import Operator, Pauli
 
 
 complex_t = TypeVar("complex_t", float, complex)
@@ -238,7 +239,20 @@ class UnitaryDecomposition(Decomposition):
         return unit_coeffs, unitary_matrices
 
 
+class PauliDecomposition(Decomposition):
+    basis = "IXYZ"
 
-
-
-
+    def decompose_matrix(
+        self,
+    ) -> Tuple[complex_arr_t, List[complex_arr_t]]:
+        prefactor = 1.0 / (2**self.num_qubits)
+        labels, unit_mats, coeffs = [], [], []
+        for pauli_gates in product(self.basis, repeat=self.num_qubits):
+            paulis = "".join(pauli_gates)
+            op: complex_arr_t = Operator(Pauli(paulis)).data
+            coef: complex_arr_t = np.trace(op @ self.matrix)
+            if coef * np.conj(coef) != 0:
+                coeffs.append(prefactor * coef)
+                unit_mats.append(op)
+                labels.append(paulis)
+        return np.array(coeffs, dtype=np.cdouble), unit_mats

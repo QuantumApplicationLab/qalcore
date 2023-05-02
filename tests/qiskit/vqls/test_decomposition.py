@@ -5,6 +5,7 @@ import pytest
 from qalcore.qiskit.vqls.numpy_unitary_matrices import (
     Decomposition,
     UnitaryDecomposition,
+    PauliDecomposition
 )
 
 
@@ -22,6 +23,7 @@ def test_decomposition_raises():
         Decomposition(matrix=mat)
 
 
-def test_unitary_decomposition(symmetric):
-    decomp = UnitaryDecomposition(matrix=symmetric)
+@pytest.mark.parametrize("decomposition_t", [UnitaryDecomposition, PauliDecomposition])
+def test_decomposition(symmetric, decomposition_t):
+    decomp = decomposition_t(matrix=symmetric)
     assert_allclose(decomp.recompose(), symmetric)
