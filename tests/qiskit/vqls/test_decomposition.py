@@ -16,8 +16,7 @@ def symmetric(request):
     return mat
 
 
-@pytest.mark.skip(reason="WIP")
-def test_decomposition_base():
+def test_decomposition_raises():
     mat = np.eye(4)[-1::-1]
     with pytest.raises(NotImplementedError, match="decompose.+Decomposition"):
         Decomposition(matrix=mat)
