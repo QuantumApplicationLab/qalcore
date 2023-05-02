@@ -26,12 +26,8 @@ from qiskit.algorithms.minimum_eigen_solvers.vqe import (
     _validate_initial_point,
 )
 
-from qiskit.opflow import (
-    CircuitSampler
-)
 
-
-from qiskit.algorithms.optimizers import SLSQP, Minimizer, Optimizer
+from qiskit.algorithms.optimizers import Minimizer, Optimizer
 from qiskit.opflow.gradients import GradientBase
 
 
@@ -39,7 +35,7 @@ from qalcore.qiskit.vqls.variational_linear_solver import (
     VariationalLinearSolver,
     VariationalLinearSolverResult,
 )
-from qalcore.qiskit.vqls.numpy_unitary_matrices import UnitaryDecomposition
+from qalcore.qiskit.vqls.numpy_unitary_matrices import UnitaryDecomposition, Decomposition
 from qalcore.qiskit.vqls.hadamard_test import HadammardTest, HadammardOverlapTest
 
 from qiskit.primitives import BaseEstimator, BaseSampler
@@ -172,10 +168,8 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         validate_min("max_evals_grouped", max_evals_grouped, 1)
 
         self._num_qubits = None
-
         self._max_evals_grouped = max_evals_grouped
-        self._circuit_sampler = None  # type: Optional[CircuitSampler]
-
+    
         self.estimator = estimator
         self.sampler = sampler
         self.ansatz = ansatz
@@ -194,11 +188,10 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
         self.vector_circuit = None
         self.matrix_circuits = None
-        self.num_hdr = None
-        self.observable = None
 
         self.default_solve_options = {"use_overlap_test": False,
-                                      "use_local_cost_function": False}
+                                      "use_local_cost_function": False,
+                                      "matrix_decomposition": "symmetric"}
 
     @property
     def num_qubits(self) -> int:
@@ -303,7 +296,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         Args:
             matrix (Union[np.ndarray, QuantumCircuit, List]): matrix of the linear system
             vector (Union[np.ndarray, QuantumCircuit]): rhs of thge linear system
-            options (Dict): Options to compute defien the quantum circuits that compute the cost function 
+            options (Dict): Options to compute define the quantum circuits that compute the cost function 
 
         Raises:
             ValueError: if vector and matrix have different size
@@ -347,7 +340,9 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                     + ". Matrix dimension: "
                     + str(matrix.shape[0])
                 )
-            self.matrix_circuits = UnitaryDecomposition(matrix=matrix)
+            decomposition = {"pauli": None,
+                             "symmetric": UnitaryDecomposition} [options["matrix_decomposition"]]
+            self.matrix_circuits = decomposition(matrix=matrix)
 
         # a single circuit
         elif isinstance(matrix, QuantumCircuit):
@@ -355,12 +350,13 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                 raise ValueError(
                     "Matrix and vector circuits have different numbers of qubits."
                 )
-            self.matrix_circuits = UnitaryDecomposition(circuits=matrix)
+            self.matrix_circuits = Decomposition(circuits=matrix)
 
+        # if its a list of (coefficients, circuits)
         elif isinstance(matrix, List):
             assert isinstance(matrix[0][0], (float, complex))
             assert isinstance(matrix[0][1], QuantumCircuit)
-            self.matrix_circuits = UnitaryDecomposition(
+            self.matrix_circuits = Decomposition(
                 circuits=[m[1] for m in matrix], coefficients=[m[0] for m in matrix]
             )
 
@@ -746,6 +742,10 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
 
         if options["use_overlap_test"] and self.sampler is None:
             raise ValueError("Please provide a sampler primitives when using Hadamard Overlap test")
+        
+        valid_matrix_decomposition = ["symmetric", "pauli"]
+        if options["matrix_decomposition"].lower() not in valid_matrix_decomposition:
+            raise ValueError("matrix decomposition {k} not recognized, valid keys are {valid_matrix_decomposition}")
 
         return options 
 
