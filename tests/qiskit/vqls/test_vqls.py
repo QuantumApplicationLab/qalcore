@@ -26,7 +26,7 @@ from qiskit.quantum_info import Statevector
 
 from qiskit.utils import QuantumInstance, algorithm_globals, has_aer
 from qiskit.circuit.library.n_local.real_amplitudes import RealAmplitudes
-from qalcore.qiskit.vqls.numpy_unitary_matrices import UnitaryDecomposition
+from qalcore.qiskit.vqls.matrix_decomposition import SymmetricDecomposition
 
 from qiskit.quantum_info import Operator
 from qiskit.algorithms.optimizers import COBYLA
@@ -124,12 +124,12 @@ class TestVQLS(QiskitTestCase):
         qc2.x(1)
         qc2.cnot(0,1)
 
-        matrix = UnitaryDecomposition(
+        matrix = SymmetricDecomposition(
             circuits = [qc1, qc2],
             coefficients = [0.5, 0.5]
         )
 
-        np_matrix = matrix.recompose(matrix.coefficients, matrix.unitary_matrices )
+        np_matrix = matrix.recompose()
         np_rhs = Operator(rhs).data @ np.array([1,0,0,0])
 
         # classical_solution = NumPyLinearSolver().solve(np_matrix, np_rhs/np.linalg.norm(np_rhs))
