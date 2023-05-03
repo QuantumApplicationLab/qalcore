@@ -12,7 +12,7 @@ from scipy.optimize import OptimizeResult
 import mthree
 
 # Grab functions and modules from Qiskit needed
-from qiskit import QuantumCircuit, transpile
+from qiskit import QuantumCircuit, transpile, QuantumRegister
 from qiskit import Aer
 
 from qiskit.providers import Backend
