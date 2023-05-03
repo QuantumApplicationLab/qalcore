@@ -1,6 +1,5 @@
 from collections import namedtuple
 from itertools import product
-from types import SimpleNamespace
 from typing import Optional, Union, List, Tuple, TypeVar, cast
 
 import numpy as np
@@ -15,41 +14,8 @@ from qiskit.quantum_info import Operator, Pauli
 complex_t = TypeVar("complex_t", float, complex)
 complex_arr_t = npt.NDArray[np.cdouble]
 
-
-def auxilliary_matrix(x: Union[npt.NDArray[np.float_], complex_arr_t]) -> complex_arr_t:
-    """
-    Returns the auxiliary matrix for the QFT of size n.
-
-    Parameters
-    ----------
-    n : int
-        The size of the QFT.
-
-    Returns
-    -------
-    np.ndarray
-        The auxiliary matrix.
-
-    Notes
-    -----
-    The auxiliary matrix is defined as the matrix with elements
-    aux[i, j] = exp(2*pi*i*j/n) / sqrt(n).
-
-    See Also
-    --------
-    qft : The quantum Fourier transform.
-    """
-    mat = np.eye(len(x)) - x @ x
-    mat = cast(npt.NDArray[Union[np.float_, np.cdouble]], spla.sqrtm(mat))
-    return 1.0j * mat
-
-
-class Decomposition:
-    """Decompose a matrix representing quantum circuits
-
-    For the mathematical background for the decomposition, see the following
-    math.sx answer: https://math.stackexchange.com/a/1710390
-
+class MatrixDecomposition:
+    """Base class for the decomposition of a matrix in quantum circuits.
     """
 
     CircuitElement = namedtuple("CircuitElement", ["coeff", "circuit"])
@@ -88,8 +54,8 @@ class Decomposition:
         """
         if matrix is not None:  # ignore circuits & coefficients
             self._matrix, self.num_qubits = self._validate_matrix(matrix)
-            self._coefficients, self._matrices = self.decompose_matrix()
-            self._circuits = self._create_circuits(self.matrices)
+            self._coefficients, self._matrices, self._circuits = self.decompose_matrix()
+            
         elif circuits is not None:
             self._circuits: List[QuantumCircuit] = (
                 circuits if isinstance(circuits, (list, tuple)) else [circuits]
@@ -140,30 +106,12 @@ class Decomposition:
             raise ValueError(
                 f"Input matrix dimension is not a power of 2: {num_qubits}"
             )
-        if not np.allclose(matrix, matrix.conj().T):  # FIXME: is this required?
-            raise ValueError(f"Input matrix isn't Hermitian:\n{matrix}")
+        if not np.allclose(matrix, matrix.conj().T): 
+            raise ValueError(f"Input matrix isn't symmetric:\n{matrix}")
+        
         return matrix, num_qubits
 
-    def _create_circuits(self, unimatrices: List[np.ndarray]) -> List[QuantumCircuit]:
-        """Construct the quantum circuits.
 
-        Parameters
-        ----------
-        unimatrices : List[np.ndarray]
-            list of unitary matrices of the decomposition.
-
-        Returns
-        -------
-        List[QuantumCircuit]
-            list of resulting quantum circuits.
-        """
-
-        def make_qc(mat: complex_arr_t) -> QuantumCircuit:
-            qc = QuantumCircuit(self.num_qubits)
-            qc.unitary(mat, qc.qubits)
-            return qc
-
-        return [make_qc(mat) for mat in unimatrices]
 
     @property
     def matrix(self) -> np.ndarray:
@@ -220,13 +168,15 @@ class Decomposition:
         coeffs, matrices = self.coefficients, self.matrices
         return (coeffs.reshape(len(coeffs), 1, 1) * matrices).sum(axis=0)
 
-    def decompose_matrix(self) -> Tuple[complex_arr_t, List[complex_arr_t]]:
+    def decompose_matrix(self) -> Tuple[complex_arr_t, List[complex_arr_t], List[QuantumCircuit]]:
         raise NotImplementedError(f"can't decompose in {self.__class__.__name__!r}")
 
 
-class UnitaryDecomposition(Decomposition):
+class SymmetricDecomposition(MatrixDecomposition):
     """
-    A class that represents the unitary decomposition of a matrix.
+    A class that represents the symmetric decomposition of a matrix.
+    For the mathematical background for the decomposition, see the following
+    math.sx answer: https://math.stackexchange.com/a/1710390
 
     Methods
     -------
@@ -235,13 +185,59 @@ class UnitaryDecomposition(Decomposition):
 
     See Also
     --------
-    Decomposition : A base class for matrix decompositions.
+    MatrixDecomposition : A base class for matrix decompositions.
     recompose : Rebuilds the original matrix from the decomposed one.
     """
 
+    def _create_circuits(self, unimatrices: List[np.ndarray]) -> List[QuantumCircuit]:
+        """Construct the quantum circuits.
+
+        Parameters
+        ----------
+        unimatrices : List[np.ndarray]
+            list of unitary matrices of the decomposition.
+
+        Returns
+        -------
+        List[QuantumCircuit]
+            list of resulting quantum circuits.
+        """
+
+        def make_qc(mat: complex_arr_t) -> QuantumCircuit:
+            qc = QuantumCircuit(self.num_qubits)
+            qc.unitary(mat, qc.qubits)
+            return qc
+
+        return [make_qc(mat) for mat in unimatrices]
+
+
+    @staticmethod
+    def auxilliary_matrix(x: Union[npt.NDArray[np.float_], complex_arr_t]) -> complex_arr_t:
+        """
+        Returns the auxiliary matrix for the decomposition of size n.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            original matrix.
+
+        Returns
+        -------
+        np.ndarray
+            The auxiliary matrix.
+
+        Notes
+        -----
+        The auxiliary matrix is defined as : i * sqrt(I - x^2)
+
+        """
+        mat = np.eye(len(x)) - x @ x
+        mat = cast(npt.NDArray[Union[np.float_, np.cdouble]], spla.sqrtm(mat))
+        return 1.0j * mat
+
     def decompose_matrix(
         self,
-    ) -> Tuple[complex_arr_t, List[complex_arr_t]]:
+    ) -> Tuple[complex_arr_t, List[complex_arr_t], List[QuantumCircuit]]:
         """
         Decompose a generic numpy matrix into a sum of unitary matrices.
 
@@ -272,20 +268,23 @@ class UnitaryDecomposition(Decomposition):
         # Get the matrices
         unitary_matrices, unitary_coefficients = [], []
         if not np.allclose(mat_real, 0.0):
-            aux_mat = auxilliary_matrix(mat_real)
+            aux_mat = self.auxilliary_matrix(mat_real)
             unitary_matrices += [mat_real + aux_mat, mat_real - aux_mat]
             unitary_coefficients += [coef_real] * 2
 
         if not np.allclose(mat_imag, 0.0):
-            aux_mat = auxilliary_matrix(mat_imag)
+            aux_mat = self.auxilliary_matrix(mat_imag)
             unitary_matrices += [mat_imag + aux_mat, mat_imag - aux_mat]
             unitary_coefficients += [coef_imag] * 2
         unit_coeffs = np.array(unitary_coefficients, dtype=np.cdouble)
 
-        return unit_coeffs, unitary_matrices
+        # create the circuits
+        circuits = self._create_circuits(unitary_matrices)
+
+        return unit_coeffs, unitary_matrices, circuits
 
 
-class PauliDecomposition(Decomposition):
+class PauliDecomposition(MatrixDecomposition):
     """
     A class that represents the Pauli decomposition of a matrix.
 
@@ -297,26 +296,52 @@ class PauliDecomposition(Decomposition):
     Methods
     -------
     decompose_matrix() -> Tuple[complex_arr_t, List[complex_arr_t]]:
-        Decompose a matrix into a sum of Pauli gates.
+        Decompose a matrix into a sum of Pauli strings.
 
     See Also
     --------
-    Decomposition : A base class for matrix decompositions.
+    MatrixDecomposition : A base class for matrix decompositions.
     """
 
     basis = "IXYZ"
 
-    def decompose_matrix(
-        self,
-    ) -> Tuple[complex_arr_t, List[complex_arr_t]]:
+    @staticmethod
+    def _create_circuit(pauli_string: str) -> QuantumCircuit:
+        """creates a quantum circuit for a given pauli string
+
+        Args:
+            pauli_string (str): the input pauli string
+
+        Returns:
+            QuantumCircuit: quantum circuit for the string 
+        """
+        num_qubit = len(pauli_string)
+        qc = QuantumCircuit(num_qubit)
+        for iqbit, gate in enumerate(pauli_string[::-1]):
+            qc.__getattribute__(gate.lower())(iqbit)
+        return qc
+
+    def decompose_matrix(self) -> Tuple[complex_arr_t, List[complex_arr_t], List[QuantumCircuit]]:
+        """Decompose a generic numpy matrix into a sum of Pauli strings.
+
+        Returns:
+            Tuple[complex_arr_t, List[complex_arr_t]]: 
+                A tuple containing the list of coefficients and the numpy matrix of the decomposition.
+        """
+
         prefactor = 1.0 / (2**self.num_qubits)
-        labels, unit_mats, coeffs = [], [], []
+        unit_mats, coeffs, circuits = [], [], []
+
         for pauli_gates in product(self.basis, repeat=self.num_qubits):
-            paulis = "".join(pauli_gates)
-            op: complex_arr_t = Operator(Pauli(paulis)).data
-            coef: complex_arr_t = np.trace(op @ self.matrix)
+
+            pauli_string = "".join(pauli_gates)
+            pauli_op = Pauli(pauli_string)
+            pauli_matrix = pauli_op.to_matrix()
+            coef: complex_arr_t = np.trace(pauli_matrix @ self.matrix)
+
             if coef * np.conj(coef) != 0:
                 coeffs.append(prefactor * coef)
-                unit_mats.append(op)
-                labels.append(paulis)
-        return np.array(coeffs, dtype=np.cdouble), unit_mats
+                unit_mats.append(pauli_matrix)
+                circuits.append(self._create_circuit(pauli_string))
+
+        return np.array(coeffs, dtype=np.cdouble), unit_mats, circuits

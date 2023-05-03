@@ -380,7 +380,7 @@ class VariationalLinearSolver(ABC):
         raise NotImplementedError
 
 
-class UnitaryDecomposition:
+class SymmetricDecomposition:
     r"""Compute the unitary decomposition of a general matrix
     See:
         https://math.stackexchange.com/questions/1710247/every-matrix-can-be-written-as-a-sum-of-unitary-matrices/1710390#1710390
@@ -1117,7 +1117,7 @@ from qalcore.qiskit.vqls.variational_linear_solver import (
     VariationalLinearSolver,
     VariationalLinearSolverResult,
 )
-from qalcore.qiskit.vqls.numpy_unitary_matrices import UnitaryDecomposition
+from qalcore.qiskit.vqls.matrix_decomposition import SymmetricDecomposition
 from qalcore.qiskit.vqls.hadamard_test import HadammardTest, HadammardOverlapTest
 
 from dataclasses import dataclass
@@ -1474,7 +1474,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                     + ". Matrix dimension: "
                     + str(matrix.shape[0])
                 )
-            self.matrix_circuits = UnitaryDecomposition(matrix=matrix)
+            self.matrix_circuits = SymmetricDecomposition(matrix=matrix)
 
         # a single circuit
         elif isinstance(matrix, QuantumCircuit):
@@ -1482,12 +1482,12 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                 raise ValueError(
                     "Matrix and vector circuits have different numbers of qubits."
                 )
-            self.matrix_circuits = UnitaryDecomposition(circuits=matrix)
+            self.matrix_circuits = SymmetricDecomposition(circuits=matrix)
 
         elif isinstance(matrix, List):
             assert isinstance(matrix[0][0], (float, complex))
             assert isinstance(matrix[0][1], QuantumCircuit)
-            self.matrix_circuits = UnitaryDecomposition(
+            self.matrix_circuits = SymmetricDecomposition(
                 circuits=[m[1] for m in matrix], coefficients=[m[0] for m in matrix]
             )
 

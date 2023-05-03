@@ -35,7 +35,7 @@ from qalcore.qiskit.vqls.variational_linear_solver import (
     VariationalLinearSolver,
     VariationalLinearSolverResult,
 )
-from qalcore.qiskit.vqls.numpy_unitary_matrices import UnitaryDecomposition, Decomposition
+from qalcore.qiskit.vqls.matrix_decomposition import SymmetricDecomposition, MatrixDecomposition, PauliDecomposition
 from qalcore.qiskit.vqls.hadamard_test import HadammardTest, HadammardOverlapTest
 
 from qiskit.primitives import BaseEstimator, BaseSampler
@@ -340,8 +340,8 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                     + ". Matrix dimension: "
                     + str(matrix.shape[0])
                 )
-            decomposition = {"pauli": None,
-                             "symmetric": UnitaryDecomposition} [options["matrix_decomposition"]]
+            decomposition = {"pauli": PauliDecomposition,
+                             "symmetric": SymmetricDecomposition} [options["matrix_decomposition"]]
             self.matrix_circuits = decomposition(matrix=matrix)
 
         # a single circuit
@@ -350,13 +350,13 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
                 raise ValueError(
                     "Matrix and vector circuits have different numbers of qubits."
                 )
-            self.matrix_circuits = Decomposition(circuits=matrix)
+            self.matrix_circuits = MatrixDecomposition(circuits=matrix)
 
         # if its a list of (coefficients, circuits)
         elif isinstance(matrix, List):
             assert isinstance(matrix[0][0], (float, complex))
             assert isinstance(matrix[0][1], QuantumCircuit)
-            self.matrix_circuits = Decomposition(
+            self.matrix_circuits = MatrixDecomposition(
                 circuits=[m[1] for m in matrix], coefficients=[m[0] for m in matrix]
             )
 
@@ -527,7 +527,7 @@ class VQLS(VariationalAlgorithm, VariationalLinearSolver):
         cost = 1.0 - np.real(sum_terms / norm)
 
         # print("Cost function %f" % cost)
-        return cost
+        return cost 
 
     def _compute_normalization_term(
         self,
