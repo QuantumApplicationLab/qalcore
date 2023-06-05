@@ -16,21 +16,21 @@ Variational Quantum Linear Solver
 =======================================
 """
 
-from qalcore.qiskit.vqls.vqls import VQLS, VQLSLog
-from qalcore.qiskit.vqls.hadamard_test import HadammardTest, HadammardOverlapTest
-from qalcore.qiskit.vqls.matrix_decomposition import SymmetricDecomposition, PauliDecomposition
-from qalcore.qiskit.vqls.variational_linear_solver import (
-    VariationalLinearSolver,
-    VariationalResult,
-)
+# The code of the vqls has been moved to: https://github.com/QuantumApplicationLab/vqls-prototype 
+# and has been made available through the qiskit ecosystem : https://qiskit.org/ecosystem/
+
+from vqls_prototype import VQLS, VQLSLog
+from vqls_prototype import HadammardTest, HadammardOverlapTest
+from vqls_prototype import SymmetricDecomposition, PauliDecomposition
+from vqls_prototype.matrix_decomposition import MatrixDecomposition
+
 
 __all__ = [
     "VQLS",
-    "VQLSLog"
+    "VQLSLog",
     "HadammardTest",
     "HadammardOverlapTest",
     "SymmetricDecomposition",
-    "PauliDecomposition",
-    "VariationalLinearSolver",
-    "VariationalResult",
+    "MatrixDecomposition",
+    "PauliDecomposition"
 ]

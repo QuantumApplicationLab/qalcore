@@ -2,7 +2,7 @@ import numpy as np
 from numpy.testing import assert_allclose
 import pytest
 
-from qalcore.qiskit.vqls.matrix_decomposition import (
+from qalcore.qiskit.vqls import (
     MatrixDecomposition,
     SymmetricDecomposition,
     PauliDecomposition
