@@ -1,4 +1,4 @@
-from qalcore.qiskit.vqls.vqls import VQLS, VQLSLog
+from qalcore.qiskit.vqls import VQLS, VQLSLog
 from qiskit.circuit.library.n_local.real_amplitudes import RealAmplitudes
 from qiskit.algorithms.optimizers import COBYLA, ADAM
 import numpy as np
