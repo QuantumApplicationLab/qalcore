@@ -2,6 +2,7 @@ from sympy import Symbol
 from sympy.matrices import Matrix
 import numpy as np
 from qalcore.dwave.qubols.encodings import RealUnitQbitEncoding
+from typing import Optional, Union, List, Callable, Dict, Tuple
 from dwave.system import DWaveSampler , EmbeddingComposite
 import neal
 from dimod import ExactSolver
@@ -10,21 +11,50 @@ from .solution_vector import SolutionVector
 
 class QUBOLS:
 
-    def __init__(self, A, b):
+    def __init__(self, options: Optional[Union[Dict, None]] = None):
         """Linear Solver using QUBO
 
         Args:
-            A (np.matrix): matrix of the linear system
-            b (np.array): rhs of the linear system
+            options: dictionary of options for solving the linear system
         """
 
-        self.A = A 
-        self.b = b
-        self.size = A.shape[0]
-        
+        self.default_solve_options = {
+            "sampler": neal.SimulatedAnnealingSampler(),
+            "encoding": RealUnitQbitEncoding,
+            "num_qbits": 11,
+            "num_reads": 100,
+            "verbose": False
+        }
+        self.options = self._validate_solve_options(options)
+        self.sampler = self.options.pop('sampler')
 
-    def solve(self, sampler = neal.SimulatedAnnealingSampler(), 
-                    encoding=RealUnitQbitEncoding, nqbit=11, **kwargs):
+    def _validate_solve_options(self, options: Union[Dict, None]) -> Dict:
+        """validate the options used for the solve methods
+
+        Args:
+            options (Union[Dict, None]): options
+        """
+        valid_keys = self.default_solve_options.keys()
+
+        if options is None:
+            options = self.default_solve_options
+
+        else:
+            for k in options.keys():
+                if k not in valid_keys:
+                    raise ValueError(
+                        "Option {k} not recognized, valid keys are {valid_keys}"
+                    )
+            for k in valid_keys:
+                if k not in options.keys():
+                    options[k] = self.default_solve_options[k]
+
+        return options
+
+
+    def solve(self, 
+              matrix: np.ndarray,
+              vector: np.ndarray ):
         """Solve the linear system
 
         Args:
@@ -36,11 +66,17 @@ class QUBOLS:
             _type_: _description_
         """
 
-        sol = SolutionVector(size=self.size, nqbit=nqbit, encoding=encoding)
+        self.A = matrix 
+        self.b = vector
+        self.size = self.A.shape[0]
+    
+        sol = SolutionVector(size=self.size, 
+                             nqbit=self.options['num_qbits'], 
+                             encoding=self.options['encoding'])
         self.x = sol.create_polynom_vector()
         self.qubo_dict = self.create_qubo_matrix(self.x)
 
-        self.sampleset = sampler.sample_qubo(self.qubo_dict,**kwargs)
+        self.sampleset = self.sampler.sample_qubo(self.qubo_dict, num_reads = self.options['num_reads'])
         self.lowest_sol = self.sampleset.lowest()
         return sol.decode_solution(self.lowest_sol.record[0][0])
 

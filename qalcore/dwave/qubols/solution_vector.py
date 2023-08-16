@@ -32,7 +32,7 @@ class SolutionVector(object):
         """
         encoded_reals = []
         for i in range(self.size):
-            var_base_name = self.base_name + str(i+1)
+            var_base_name = self.base_name + '_%03d' %(i+1)
             encoded_reals.append(self.encoding(self.nqbit, var_base_name))
 
         return encoded_reals
