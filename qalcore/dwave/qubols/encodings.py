@@ -91,7 +91,18 @@ class RealUnitQbitEncoding(BaseQbitEncoding):
     def __init__(self, nqbit, var_base_name):
         super().__init__(nqbit, var_base_name)
         self.base_exponent = 0
+        self.int_max = None
         assert((nqbit-1)%2==0)
+
+    def find_int_max(self):
+        """Find the amx value of the encoding
+        """
+        i = 0
+        self.int_max = 2**(i-self.base_exponent)
+
+        for i in range(1, (self.nqbit-1)//2):
+            self.int_max += 2**(i-self.base_exponent)
+
 
     def create_polynom(self):
         """
@@ -102,13 +113,8 @@ class RealUnitQbitEncoding(BaseQbitEncoding):
         """
         out = 0.0
 
-        i = 0
-        self.int_max = 2**(i-self.base_exponent)
+        self.find_int_max()
 
-        for i in range(1, (self.nqbit-1)//2):
-            self.int_max += 2**(i-self.base_exponent)
-
-        
         i = 0
         out += 2**(i-self.base_exponent)/self.int_max * self.variables[i]
 
@@ -120,6 +126,9 @@ class RealUnitQbitEncoding(BaseQbitEncoding):
 
     def decode_polynom(self, data):
         out = 0.0
+        
+        if self.int_max is None:
+            self.find_int_max()
 
         i=0
         out += 2**(i-self.base_exponent)/self.int_max * data[i]
