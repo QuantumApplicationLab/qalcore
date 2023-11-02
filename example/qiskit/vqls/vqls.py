@@ -24,21 +24,21 @@ ansatz = RealAmplitudes(2, entanglement="full", reps=3, insert_barriers=False)
 
 backend = BasicAer.get_backend("statevector_simulator")
 # backend = BasicAer.get_backend("qasm_simulator")
+options={"use_overlap_test": False, "use_local_cost_function": False}
 estimator = BackendEstimator(backend)
 estimator = Estimator()
 sampler = Sampler()
-log = VQLSLog([],[])
+
 vqls = VQLS(
     estimator,
     ansatz,
     opt.CG(maxiter=200),
-    callback=log.update, 
+    options=options,
     sampler=sampler
 )
 
-opt= {"use_overlap_test": False,
-      "use_local_cost_function": False}
-res = vqls.solve(A, b, opt)
+
+res = vqls.solve(A, b)
 
 
 ref_solution = classical_solution / np.linalg.norm(classical_solution)

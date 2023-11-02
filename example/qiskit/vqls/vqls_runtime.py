@@ -1,4 +1,4 @@
-from qalcore.qiskit.vqls import VQLS, VQLSLog
+from qalcore.qiskit.vqls import VQLS
 from qiskit.circuit.library.n_local.real_amplitudes import RealAmplitudes
 from qiskit.algorithms.optimizers import COBYLA, ADAM
 import numpy as np
@@ -20,6 +20,8 @@ b = np.random.rand(4)
 # define ansatz
 ansatz = RealAmplitudes(2, entanglement="full", reps=3, insert_barriers=False)
 
+opts = {"use_overlap_test": False,
+        "use_local_cost_function": False}
 
 # define the runtime
 service = QiskitRuntimeService()
@@ -37,11 +39,11 @@ with Session(service=service, backend=backend) as session:
     vqls = VQLS(
         estimator,
         ansatz,
-        ADAM(maxiter=5, disp=True)
+        ADAM(maxiter=5, disp=True),
+        options=opts
     )
-    opt= {"use_overlap_test": False,
-        "use_local_cost_function": False}
-    res = vqls.solve(A, b, opt)
+    
+    res = vqls.solve(A, b)
 
 
 classical_solution = np.linalg.solve(A,b)
