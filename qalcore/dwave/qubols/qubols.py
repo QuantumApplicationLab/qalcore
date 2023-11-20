@@ -100,7 +100,7 @@ class QUBOLS:
             A = Matrix(self.A)
 
         if isinstance(self.b, spsp.spmatrix):
-            b = SparseMatrix(self.b)
+            b = SparseMatrix(*self.b.shape, dict(self.b.todok().items()))
         else:
             b = Matrix(self.b)
 
