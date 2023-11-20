@@ -1,12 +1,12 @@
 from sympy import Symbol
-from sympy.matrices import Matrix
+from sympy.matrices import Matrix, SparseMatrix
 import numpy as np
 from qalcore.dwave.qubols.encodings import RealUnitQbitEncoding
 from typing import Optional, Union, List, Callable, Dict, Tuple
 from dwave.system import DWaveSampler , EmbeddingComposite
 import neal
 from dimod import ExactSolver
-
+import scipy.sparse as spsp
 from .solution_vector import SolutionVector
 
 class QUBOLS:
@@ -94,8 +94,15 @@ class QUBOLS:
         Returns:
             _type_: _description_
         """
-        A = Matrix(self.A)
-        b = Matrix(self.b)
+        if isinstance(self.A, spsp.spmatrix):
+            A = SparseMatrix(*self.A.shape, dict(self.A.todok().items()))
+        else:
+            A = Matrix(self.A)
+
+        if isinstance(self.b, spsp.spmatrix):
+            b = SparseMatrix(self.b)
+        else:
+            b = Matrix(self.b)
 
         polynom = x.T @ A.T @ A @ x - x.T @ A.T @ b - b.T@ A @ x + b.T @ b
         polynom = polynom[0]
