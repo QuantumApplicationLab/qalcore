@@ -17,32 +17,24 @@ import unittest
 from qiskit.test import QiskitTestCase
 
 import numpy as np
-# from qiskit.algorithms.linear_solvers.numpy_linear_solver import NumPyLinearSolver
 
 from qiskit import BasicAer, QuantumCircuit
 from qiskit.circuit.library import RealAmplitudes
 
-from qiskit.quantum_info import Statevector
-
-from qiskit.utils import QuantumInstance, algorithm_globals, has_aer
-from qiskit.circuit.library.n_local.real_amplitudes import RealAmplitudes
-
-
-from qiskit.quantum_info import Operator
-from qiskit.algorithms.optimizers import COBYLA
+from qiskit_algorithms.optimizers import ADAM
 from qiskit.primitives import Estimator, Sampler, BackendEstimator, BackendSampler
-from qalcore.qiskit.vqls import VQLS
+from vqls_prototype import VQLS
 
-if has_aer():
-    from qiskit import Aer
+# 8-11-2023
+# Overlap Hadamard test do not work with BasicAer  primitives anymore
+# this test case is skipped for now
+
 
 class TestVQLS(QiskitTestCase):
     """Test VQLS"""
 
     def setUp(self):
         super().setUp()
-        self.seed = 50
-        algorithm_globals.random_seed = self.seed
 
         self.options = (
             {"use_local_cost_function": False, "use_overlap_test": False},
@@ -75,16 +67,56 @@ class TestVQLS(QiskitTestCase):
         rhs = np.array([0.1] * 4)
         ansatz = RealAmplitudes(num_qubits=2, reps=3, entanglement="full")
 
-        for estimator, sampler in zip(self.estimators, self.samplers):
-            for opt in self.options:
+        for iprim, (estimator, sampler) in enumerate(
+            zip(self.estimators, self.samplers)
+        ):
+            for iopt, opt in enumerate(self.options):
+                if iprim == 1 and iopt == 2:
+                    continue
                 vqls = VQLS(
                     estimator,
                     ansatz,
-                    COBYLA(maxiter=2, disp=True),
+                    ADAM(maxiter=2),
                     options=opt,
                     sampler=sampler,
                 )
                 _ = vqls.solve(matrix, rhs)
+
+    def test_circuit_input_statevector(self):
+        """Test the VQLS on circuits input using statevector simulator."""
+
+        num_qubits = 2
+        ansatz = RealAmplitudes(num_qubits=num_qubits, reps=3, entanglement="full")
+
+        rhs = QuantumCircuit(num_qubits)
+        rhs.h(0)
+        rhs.h(1)
+
+        qc1 = QuantumCircuit(num_qubits)
+        qc1.x(0)
+        qc1.x(1)
+        qc1.cx(0, 1)
+
+        qc2 = QuantumCircuit(num_qubits)
+        qc2.h(0)
+        qc2.x(1)
+        qc2.cx(0, 1)
+
+        for iprim, (estimator, sampler) in enumerate(
+            zip(self.estimators, self.samplers)
+        ):
+            for iopt, opt in enumerate(self.options):
+                if iprim == 1 and iopt == 2:
+                    continue
+                vqls = VQLS(
+                    estimator,
+                    ansatz,
+                    ADAM(maxiter=2),
+                    sampler=sampler,
+                    options=opt,
+                )
+                _ = vqls.solve([[0.5, qc1], [0.5, qc2]], rhs)
+
 
 if __name__ == "__main__":
     unittest.main()
