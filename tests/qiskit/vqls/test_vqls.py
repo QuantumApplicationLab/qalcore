@@ -23,7 +23,7 @@ from qiskit.circuit.library import RealAmplitudes
 
 from qiskit_algorithms.optimizers import ADAM
 from qiskit.primitives import Estimator, Sampler, BackendEstimator, BackendSampler
-from vqls_prototype import VQLS
+from qalcore.vqls_prototype import VQLS
 
 # 8-11-2023
 # Overlap Hadamard test do not work with BasicAer  primitives anymore
